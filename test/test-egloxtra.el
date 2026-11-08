@@ -213,9 +213,10 @@ transient project and cleans both up afterward."
         ;; Demoted error tolerance
         (cl-letf (((symbol-function 'eglot-code-action-organize-imports)
                    (lambda (_beg _end) (error "LSP error"))))
-          (should-not (condition-case _err
-                          (progn (eglox-organize-imports-for-hook) nil)
-                        (error t))))))))
+          (let ((debug-on-error nil))
+            (should-not (condition-case _err
+                            (progn (eglox-organize-imports-for-hook) nil)
+                          (error t)))))))))
 
 (ert-deftest eglox/code-action-inline ()
   "Test `eglox-code-action-inline' requests source.inline action."
@@ -235,9 +236,10 @@ transient project and cleans both up afterward."
       ;; Demoted error tolerance
       (cl-letf (((symbol-function 'eglot-code-actions)
                  (lambda (&rest _) (error "Action error"))))
-        (should-not (condition-case _err
-                        (progn (eglox-code-action-inline) nil)
-                      (error t)))))))
+        (let ((debug-on-error nil))
+          (should-not (condition-case _err
+                          (progn (eglox-code-action-inline) nil)
+                        (error t))))))))
 
 (ert-deftest eglox/update-workspace ()
   "Test `eglox-update-workspace' signals configuration change to server."
