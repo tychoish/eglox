@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container: silex/emacs:${{ matrix.emacs-version }}-ci
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        emacs-version:
+          - "29.4"
+          - "30.2"
+          - "31.1"
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Lint Source Code
+        uses: tychoish/elisp-ci/lint@main
+        with:
+          dependencies: "projectile cmdr"
+
+      - name: Run Tests
+        uses: tychoish/elisp-ci@main
+        with:
+          dependencies: "projectile cmdr"
