@@ -477,10 +477,11 @@ compatibility with `eglot-connect-hook'."
    (lambda (project servers)
      (when (cdr servers)
        (setf (map-elt eglot--servers-by-project project) (list (car servers)))
-       (seq-do (lambda (s)
-                 (eieio-oset s 'shutdown-requested t)
-                 (ignore-errors (jsonrpc-shutdown s t)))
-               (cdr servers))))
+       (let ((slot 'shutdown-requested))
+         (seq-do (lambda (s)
+                   (eieio-oset s slot t)
+                   (ignore-errors (jsonrpc-shutdown s t)))
+                 (cdr servers)))))
    eglot--servers-by-project))
 
 (defun eglox-reconnect-orphaned-buffers ()
@@ -625,7 +626,8 @@ Dead, empty, and managed buffers are pruned first."
              (if (timerp eglox-activate-timer) "active" "idle"))))
 
 (defun eglox-activate-log-queue (pruned)
-  "Log the size of `eglox-activate-queue' and PRUNED count at most once per interval."
+  "Log the size of `eglox-activate-queue' and PRUNED count.
+Log at most once per interval."
   (when (>= (- (float-time) eglox-activate-last-log) eglox-activate-log-interval)
     (setq eglox-activate-last-log (float-time))
     (message "eglox: %d buffer(s) queued for activation (%d pruned)"
@@ -666,7 +668,8 @@ Return the number of buffers left in the queue."
   (length eglox-activate-queue))
 
 (defun eglox-activate-enqueue (buffer)
-  "Add BUFFER to `eglox-activate-queue' if pending, and start drain timer if needed."
+  "Add BUFFER to `eglox-activate-queue' if pending.
+Start the drain timer if needed."
   (eglox-activate-prune-queue)
   (when (and (eglox-activate-buffer-pending-p buffer)
              (not (memq buffer eglox-activate-queue)))
@@ -696,7 +699,7 @@ Surplus buffers are queued in `eglox-activate-queue'."
     (eglox-activate-enqueue (current-buffer)))))
 
 (defun eglox-activate-prioritize-visible (&optional window-or-frame)
-  "Immediately activate WINDOW-OR-FRAME's buffer if pending in the throttle queue."
+  "Immediately activate WINDOW-OR-FRAME's buffer if pending in the queue."
   (let* ((win (cond
                ((windowp window-or-frame) window-or-frame)
                ((framep window-or-frame) (frame-selected-window window-or-frame))
