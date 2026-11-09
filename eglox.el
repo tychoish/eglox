@@ -28,6 +28,8 @@
 ;; - `eglox-ide-map': xref/imenu/extended-command navigation, bound at `C-c l x'.
 ;; - `eglox-describe-symbol-dwim': slime/eglot/describe-symbol contextual lookup.
 ;; - Guarded completion-at-point to prevent repeating jsonrpc errors.
+;; - `eglox-dape-map': Dape debugging commands, bound at `C-c l d', with
+;;   settings applied and restored by `eglox-global-mode'.
 
 ;;; Code:
 
@@ -77,6 +79,26 @@
 (declare-function jsonrpc-shutdown "jsonrpc")
 (declare-function jsonrpc--process "jsonrpc")
 (declare-function eieio-oset "eieio-core")
+
+(autoload 'dape "dape" nil t)
+(autoload 'dape-breakpoint-toggle "dape" nil t)
+(autoload 'dape-breakpoint-remove-all "dape" nil t)
+(autoload 'dape-continue "dape" nil t)
+(autoload 'dape-next "dape" nil t)
+(autoload 'dape-step-in "dape" nil t)
+(autoload 'dape-step-out "dape" nil t)
+(autoload 'dape-pause "dape" nil t)
+(autoload 'dape-restart "dape" nil t)
+(autoload 'dape-quit "dape" nil t)
+(autoload 'dape-repl "dape" nil t)
+(autoload 'dape-evaluate-expression "dape" nil t)
+(autoload 'dape-watch-dwim "dape" nil t)
+(autoload 'dape-info "dape" nil t)
+(autoload 'dape-memory "dape" nil t)
+(declare-function dape-breakpoint-save "dape")
+
+(defvar dape-key-prefix)
+(defvar dape-buffer-window-arrangement)
 
 (defvar projectile-projects-cache)
 (defvar projectile-enable-caching)
@@ -184,10 +206,30 @@ or `describe-symbol' as fallback."
   "c" #'execute-extended-eglot-command
   "g" #'eglot-forget-pending-continuations)
 
+(defvar-keymap eglox-dape-map
+  :name "dape"
+  :doc "Dape debugging commands attached to `eglox-command-map' at \"d\"."
+  "d" #'dape
+  "b" #'dape-breakpoint-toggle
+  "B" #'dape-breakpoint-remove-all
+  "c" #'dape-continue
+  "n" #'dape-next
+  "s" #'dape-step-in
+  "o" #'dape-step-out
+  "p" #'dape-pause
+  "r" #'dape-restart
+  "q" #'dape-quit
+  "R" #'dape-repl
+  "e" #'dape-evaluate-expression
+  "w" #'dape-watch-dwim
+  "i" #'dape-info
+  "m" #'dape-memory)
+
 (defvar-keymap eglox-command-map
   :name "eglot"
   :doc "Eglot buffer and server commands prefix map."
   "a" #'eglot-code-actions
+  "d" (cons "dape" eglox-dape-map)
   "e" #'execute-extended-eglot-command
   "f" #'eglot-format-buffer
   "i" #'eglox-code-action-inline
@@ -332,6 +374,64 @@ Rest argument _ARGS is ignored so this can be used on hooks or advices."
   (interactive)
   (eglox--init-eglot)
   (eglot-ensure))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Dape Integration
+
+(defcustom eglox-configure-dape t
+  "Whether eglox should configure Dape defaults and lifecycle hooks.
+When non-nil, `eglox-global-mode' arranges debugger windows on the right,
+saves breakpoints on exit, saves file buffers on session start, and
+suppresses dape's default global prefix in favor of `eglox-command-map'."
+  :type 'boolean
+  :group 'eglox)
+
+(defvar eglox--saved-dape-settings nil
+  "Saved dape configuration before `eglox-global-mode' was enabled.")
+
+(defun eglox--save-all-buffers ()
+  "Save all modified file-visiting buffers without confirmation."
+  (save-some-buffers t))
+
+(defun eglox--save-dape-breakpoints ()
+  "Save Dape breakpoints on exit when Dape has been loaded.
+Return nil without doing anything while Dape is not loaded, so exiting an
+Emacs session that never debugged cannot signal an error."
+  (when (featurep 'dape)
+    (dape-breakpoint-save)))
+
+(defun eglox--setup-dape ()
+  "Apply Dape settings and hooks when `eglox-configure-dape' is non-nil."
+  (when eglox-configure-dape
+    (unless eglox--saved-dape-settings
+      (setq eglox--saved-dape-settings
+            (list (and (boundp 'dape-key-prefix) (cons t dape-key-prefix))
+                  (and (boundp 'dape-buffer-window-arrangement)
+                       (cons t dape-buffer-window-arrangement))))
+      (setq dape-key-prefix nil
+            dape-buffer-window-arrangement 'right)
+      (add-hook 'kill-emacs-hook #'eglox--save-dape-breakpoints)
+      (add-hook 'dape-start-hook #'eglox--save-all-buffers))))
+
+(defun eglox--restore-dape-variable (symbol entry)
+  "Restore SYMBOL from saved ENTRY, a cons of (t . VALUE) or nil.
+A nil ENTRY means SYMBOL was unbound when saved.  If Dape has since loaded
+and defined SYMBOL, reset it to its standard value instead of unbinding it."
+  (cond ((car-safe entry) (set symbol (cdr entry)))
+        ((get symbol 'standard-value)
+         (set symbol (eval (car (get symbol 'standard-value)) t)))
+        (t (makunbound symbol))))
+
+(defun eglox--teardown-dape ()
+  "Remove Dape hooks and restore previous settings."
+  (when eglox--saved-dape-settings
+    (eglox--restore-dape-variable 'dape-key-prefix
+                                  (nth 0 eglox--saved-dape-settings))
+    (eglox--restore-dape-variable 'dape-buffer-window-arrangement
+                                  (nth 1 eglox--saved-dape-settings))
+    (setq eglox--saved-dape-settings nil))
+  (remove-hook 'kill-emacs-hook #'eglox--save-dape-breakpoints)
+  (remove-hook 'dape-start-hook #'eglox--save-all-buffers))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Managed Mode Hook & Completion Guard
@@ -767,6 +867,7 @@ Only called when `eglot' is loaded and `eglox-global-mode' is enabled."
   (add-hook 'window-selection-change-functions #'eglox-activate-prioritize-visible)
   (dolist (hook eglox-mode-hooks)
     (add-hook hook #'eglox-ensure))
+  (eglox--setup-dape)
   (when eglox--eglot-initialized
     (eglox--install-eglot-integrations)))
 
@@ -777,6 +878,7 @@ Only called when `eglot' is loaded and `eglox-global-mode' is enabled."
   (dolist (hook eglox-mode-hooks)
     (remove-hook hook #'eglox-ensure))
   (eglox--uninstall-eglot-integrations)
+  (eglox--teardown-dape)
   (when (timerp eglox-activate-timer)
     (cancel-timer eglox-activate-timer)
     (setq eglox-activate-timer nil))

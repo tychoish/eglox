@@ -86,5 +86,37 @@
   (should (equal '(describe) (eglox-ide-test--with-describe-stubs nil nil (eglox-describe-symbol-dwim nil))))
   (should (equal '(describe) (eglox-ide-test--with-describe-stubs t t (eglox-describe-symbol-dwim '(4))))))
 
+(ert-deftest eglox-ide/dape-map-attached-to-command-map ()
+  "The dape map hangs off `eglox-command-map' at \"d\"."
+  (should (keymapp eglox-dape-map))
+  (should (keymapp (keymap-lookup eglox-command-map "d")))
+  (should (eq (keymap-lookup eglox-command-map "d d") #'dape))
+  (should (eq (keymap-lookup eglox-command-map "d b") #'dape-breakpoint-toggle)))
+
+(ert-deftest eglox-ide/dape-map-lookup-every-key ()
+  (seq-do (lambda (pair)
+            (should (eq (keymap-lookup eglox-dape-map (car pair)) (cdr pair))))
+          '(("d" . dape)
+            ("b" . dape-breakpoint-toggle)
+            ("B" . dape-breakpoint-remove-all)
+            ("c" . dape-continue)
+            ("n" . dape-next)
+            ("s" . dape-step-in)
+            ("o" . dape-step-out)
+            ("p" . dape-pause)
+            ("r" . dape-restart)
+            ("q" . dape-quit)
+            ("R" . dape-repl)
+            ("e" . dape-evaluate-expression)
+            ("w" . dape-watch-dwim)
+            ("i" . dape-info)
+            ("m" . dape-memory))))
+
+(ert-deftest eglox-ide/dape-map-no-key-collisions ()
+  "Every key in `eglox-dape-map' is bound exactly once."
+  (let ((keys nil))
+    (map-keymap (lambda (event _binding) (push event keys)) eglox-dape-map)
+    (should (equal (length keys) (length (delete-dups (copy-sequence keys)))))))
+
 (provide 'test-eglox-ide)
 ;;; test-eglox-ide.el ends here

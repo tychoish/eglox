@@ -793,5 +793,105 @@ Otherwise `eglot--on-shutdown' auto-reconnects, creating an infinite reconnect l
       (eglox-ensure-hook)
       (should (= flycheck-calls 2)))))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Dape integration
+
+(defmacro eglox-test--with-clean-dape-state (&rest body)
+  "Run BODY, then restore `eglox-global-mode' and every dape setting it touches."
+  (declare (indent 0))
+  `(let ((was-on eglox-global-mode)
+         (saved-prefix (and (boundp 'dape-key-prefix) (list dape-key-prefix)))
+         (saved-arrangement (and (boundp 'dape-buffer-window-arrangement)
+                                 (list dape-buffer-window-arrangement)))
+         (saved-kill-hook (copy-sequence kill-emacs-hook))
+         (saved-start-hook (and (boundp 'dape-start-hook)
+                                (copy-sequence dape-start-hook)))
+         (eglox--saved-dape-settings nil))
+     (unwind-protect
+         (progn (eglox-global-mode -1) ,@body)
+       (eglox-global-mode (if was-on 1 -1))
+       (setq kill-emacs-hook saved-kill-hook)
+       (if saved-prefix (setq dape-key-prefix (car saved-prefix))
+         (makunbound 'dape-key-prefix))
+       (if saved-arrangement
+           (setq dape-buffer-window-arrangement (car saved-arrangement))
+         (makunbound 'dape-buffer-window-arrangement))
+       (when saved-start-hook (setq dape-start-hook saved-start-hook)))))
+
+(ert-deftest eglox/dape-enable-applies-settings-and-hooks ()
+  "Enabling `eglox-global-mode' applies the dape settings and hooks."
+  (eglox-test--with-clean-dape-state
+    (let ((eglox-configure-dape t))
+      (eglox-global-mode 1)
+      (should (null dape-key-prefix))
+      (should (eq dape-buffer-window-arrangement 'right))
+      (should (memq #'eglox--save-dape-breakpoints kill-emacs-hook))
+      (should (memq #'eglox--save-all-buffers dape-start-hook)))))
+
+(ert-deftest eglox/dape-disable-restores-settings-and-hooks ()
+  "Disabling `eglox-global-mode' restores previous dape values and hooks."
+  (eglox-test--with-clean-dape-state
+    (let ((eglox-configure-dape t))
+      (setq dape-key-prefix "\C-x\C-a"
+            dape-buffer-window-arrangement 'left)
+      (eglox-global-mode 1)
+      (eglox-global-mode -1)
+      (should (equal dape-key-prefix "\C-x\C-a"))
+      (should (eq dape-buffer-window-arrangement 'left))
+      (should-not (memq #'eglox--save-dape-breakpoints kill-emacs-hook))
+      (should-not (memq #'eglox--save-all-buffers dape-start-hook)))))
+
+(ert-deftest eglox/dape-opt-out-changes-nothing ()
+  "With `eglox-configure-dape' nil the mode leaves dape alone."
+  (eglox-test--with-clean-dape-state
+    (let ((eglox-configure-dape nil))
+      (setq dape-key-prefix "\C-x\C-a"
+            dape-buffer-window-arrangement 'left)
+      (eglox-global-mode 1)
+      (should (equal dape-key-prefix "\C-x\C-a"))
+      (should (eq dape-buffer-window-arrangement 'left))
+      (should-not (memq #'eglox--save-dape-breakpoints kill-emacs-hook)))))
+
+(ert-deftest eglox/dape-teardown-keeps-variable-bound-when-dape-loads-later ()
+  "Regression: unbinding a defcustom that dape defined after setup breaks dape.
+Teardown must reset such a variable to its standard value, not `makunbound' it."
+  (eglox-test--with-clean-dape-state
+    (let ((eglox-configure-dape t))
+      (makunbound 'dape-key-prefix)
+      (makunbound 'dape-buffer-window-arrangement)
+      (eglox-global-mode 1)
+      (put 'dape-key-prefix 'standard-value '("\C-x\C-a"))
+      (put 'dape-buffer-window-arrangement 'standard-value '('left))
+      (eglox-global-mode -1)
+      (should (boundp 'dape-key-prefix))
+      (should (equal dape-key-prefix "\C-x\C-a"))
+      (should (eq dape-buffer-window-arrangement 'left)))))
+
+(defmacro eglox-test--with-dape-feature (loaded &rest body)
+  "Run BODY with the `dape' feature present when LOADED, absent otherwise.
+Restore the real `features' list afterward."
+  (declare (indent 1))
+  `(let ((saved-features features))
+     (unwind-protect
+         (progn
+           (setq features (remq 'dape features))
+           (when ,loaded (push 'dape features))
+           ,@body)
+       (setq features saved-features))))
+
+(ert-deftest eglox/dape-exit-hook-safe-when-dape-not-loaded ()
+  "The kill-emacs hook is a no-op while dape is not loaded."
+  (eglox-test--with-dape-feature nil
+    (should-not (eglox--save-dape-breakpoints))))
+
+(ert-deftest eglox/dape-exit-hook-saves-when-loaded ()
+  "The kill-emacs hook calls `dape-breakpoint-save' once dape is loaded."
+  (let ((calls 0))
+    (eglox-test--with-dape-feature t
+      (cl-letf (((symbol-function 'dape-breakpoint-save)
+                 (lambda (&rest _) (cl-incf calls))))
+        (eglox--save-dape-breakpoints)))
+    (should (= calls 1))))
+
 (provide 'test-egloxtra)
 ;;; test-egloxtra.el ends here

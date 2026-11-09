@@ -17,6 +17,7 @@ and stability enhancements for Emacs LSP.
 - [[#features][Features]]
   - [[#throttled-activation][Throttled Activation]]
   - [[#server-lifecycle--cleanup][Server Lifecycle & Cleanup]]
+  - [[#dape-debugging][Dape Debugging]]
   - [[#keymaps--commands][Keymaps & Commands]]
 - [[#api-reference][API Reference]]
 - [[#license][License]]
@@ -29,7 +30,8 @@ and stability enhancements for Emacs LSP.
 =eglox= provides stability enhancements and workflows around Emacs' built-in =eglot= LSP client:
 - Throttled buffer activation to prevent connection storms when opening multi-file projects.
 - Server lifecycle management: duplicate server pruning, dead connection cleanup, and reconnection resilience.
-- Structured keymaps under =C-c l= for Eglot commands, IDE navigation, and project-wide actions.
+- Structured keymaps under =C-c l= for Eglot commands, IDE navigation, debugging, and project-wide actions.
+- Dape debugging commands under =C-c l d=, with settings applied and restored by =eglox-global-mode=.
 - Automatic Projectile cache warming integration on project switch.
 - Guarded completion-at-point handlers to prevent repetitive JSON-RPC errors.
 
@@ -103,6 +105,38 @@ When multiple programming buffers are loaded at once (e.g. during session restor
 - Shuts down orphaned and dead servers periodically during idle periods.
 - Re-establishes server connections on save if an LSP server died in the background.
 
+** Dape Debugging
+:PROPERTIES:
+:CUSTOM_ID: dape-debugging
+:END:
+
+[[https://github.com/svaante/dape][Dape]] is an optional dependency. =eglox= autoloads its commands, so Dape loads only when a command runs. While =eglox-global-mode= is on and =eglox-configure-dape= is non-nil, =eglox=:
+
+- Opens debugger windows on the right (=dape-buffer-window-arrangement=).
+- Leaves Dape's own global prefix unbound (=dape-key-prefix= is nil). Use =C-c l d= instead.
+- Saves modified file buffers when a debug session starts.
+- Saves breakpoints when Emacs exits, if Dape was loaded.
+
+Disabling the mode restores the previous values and removes the hooks. Set =eglox-configure-dape= to nil to opt out. The working directory comes from Dape's default, which uses =project.el= and so follows Projectile when =projectile-mode= is on.
+
+| Key         | Command                    |
+|-------------+----------------------------|
+| =C-c l d d= | =dape=                     |
+| =C-c l d b= | =dape-breakpoint-toggle=   |
+| =C-c l d B= | =dape-breakpoint-remove-all= |
+| =C-c l d c= | =dape-continue=            |
+| =C-c l d n= | =dape-next=                |
+| =C-c l d s= | =dape-step-in=             |
+| =C-c l d o= | =dape-step-out=            |
+| =C-c l d p= | =dape-pause=               |
+| =C-c l d r= | =dape-restart=             |
+| =C-c l d q= | =dape-quit=                |
+| =C-c l d R= | =dape-repl=                |
+| =C-c l d e= | =dape-evaluate-expression= |
+| =C-c l d w= | =dape-watch-dwim=          |
+| =C-c l d i= | =dape-info=                |
+| =C-c l d m= | =dape-memory=              |
+
 ** Keymaps & Commands
 :PROPERTIES:
 :CUSTOM_ID: keymaps--commands
@@ -110,6 +144,7 @@ When multiple programming buffers are loaded at once (e.g. during session restor
 
 - =C-c l= prefix exposes standard Eglot actions (=r= rename, =a= code actions, =f= format, =o= organize imports).
 - =C-c l x= binds the IDE navigation keymap (xref definitions, references, and imenu).
+- =C-c l d= binds the Dape debugging keymap.
 - =M-x eglox-describe-symbol-dwim= contextual symbol lookup across Slime, Eglot, and Elisp.
 
 * API Reference
@@ -127,6 +162,8 @@ When multiple programming buffers are loaded at once (e.g. during session restor
 | [[#eglox-activate-flush-queue][eglox-activate-flush-queue]] | Command | Flush pending throttled buffer activations |
 | [[#eglox-command-map][eglox-command-map]] | Keymap | Prefix command map for Eglot commands |
 | [[#eglox-ide-map][eglox-ide-map]] | Keymap | Submap for IDE navigation commands |
+| [[#eglox-dape-map][eglox-dape-map]] | Keymap | Submap for Dape debugging commands |
+| [[#eglox-configure-dape][eglox-configure-dape]] | Option | Whether the mode configures Dape settings and hooks |
 
 ** eglox-global-mode
 :PROPERTIES:
@@ -175,6 +212,18 @@ Keymap bound to =C-c l= for LSP commands.
 :CUSTOM_ID: eglox-ide-map
 :END:
 Keymap bound to =C-c l x= for definitions, references, and symbol navigation.
+
+** eglox-dape-map
+:PROPERTIES:
+:CUSTOM_ID: eglox-dape-map
+:END:
+Keymap bound to =C-c l d= for Dape debugging commands.
+
+** eglox-configure-dape
+:PROPERTIES:
+:CUSTOM_ID: eglox-configure-dape
+:END:
+User option, default t. When non-nil, =eglox-global-mode= applies the Dape settings and hooks described under Dape Debugging, and restores them when the mode is disabled.
 
 * License
 :PROPERTIES:
