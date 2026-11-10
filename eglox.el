@@ -793,144 +793,67 @@ Only called when `eglot' is loaded and `eglox-global-mode' is enabled."
     (cancel-timer eglox-cleanup-stale-connections-timer)
     (setq eglox-cleanup-stale-connections-timer nil)))
 
-(defcustom eglox-setting-overrides nil
-  "Alist of symbol and value overrides for the programming experience.
-Use :eglox-skip to leave a default unmanaged; nil is a value.  Call
-`eglox-refresh-settings' after changing this while the mode is active."
-  :type '(alist :key-type symbol :value-type sexp) :group 'eglot)
+(defcustom eglox-settings
+  (append (when (executable-find "rustup")
+            '((rustic-rustfmt-args . "+nightly")))
+          '((dape-key-prefix . nil)
+            (dape-buffer-window-arrangement . right)
+            (show-paren-delay . 0.25)
+            (comment-auto-fill-only-comments . t)
+            (makefile-electric-keys . t)
+            (rust-mode-treesitter-derive . t)
+            (rustic-lsp-client . eglot)
+            (rustic-format-trigger . on-save)
+            (rustic-cargo-clippy-trigger-fix . on-compile)
+            (rustic-use-rust-save-some-buffers . t)
+            (rustic-clippy-arguments . "--all --all-features -- --deny warnings")
+            (terraform-format-on-save . t)
+            (terraform-indent-level . 2)
+            (web-mode-markup-indent-offset . 2)
+            (web-mode-code-indent-offset . 2)
+            (web-mode-css-indent-offset . 2)
+            (js-indent-level . 2)
+            (web-mode-enable-auto-pairing . t)
+            (web-mode-enable-auto-expanding . t)
+            (web-mode-enable-css-colorization . t)))
+  "Alist of `(SYMBOL . VALUE)' settings managed by `eglox-global-mode'."
+  :type '(alist :key-type symbol :value-type sexp)
+  :group 'eglot)
 
-(defvar eglox--saved-settings nil)
-(defvar eglox--relinquished-settings nil)
+(defvar eglox--saved-settings nil
+  "Saved prior settings recorded by `eglox--apply-settings'.")
 
-(defun eglox--definition-files (symbol)
-  "Return files recorded as defining SYMBOL."
-  (seq-keep (lambda (entry) (when (memq symbol (cdr entry)) (car entry)))
-            load-history))
-
-(defun eglox--setting-owners (symbol)
-  "Return active setting owner entries for SYMBOL when top owner still matches."
-  (let ((owners (get symbol :setting-owners)))
-    (when (and owners
-               (default-boundp symbol)
-               (equal (default-value symbol) (nth 3 (car owners))))
-      owners)))
+(defun eglox--apply-settings ()
+  "Apply `eglox-settings' and record prior default values."
+  (unless eglox--saved-settings
+    (seq-do (lambda (entry)
+              (let ((symbol (car entry))
+                    (value (cdr entry)))
+                (unless (and (not eglox-configure-dape)
+                             (memq symbol '(dape-key-prefix dape-buffer-window-arrangement)))
+                  (push (cons symbol
+                              (cons (default-boundp symbol)
+                                    (and (default-boundp symbol)
+                                         (default-value symbol))))
+                        eglox--saved-settings)
+                  (set-default symbol value))))
+            eglox-settings)))
 
 (defun eglox--restore-settings ()
-  "Restore defaults still owned by Eglox."
+  "Restore settings saved by `eglox--apply-settings'."
   (seq-do (lambda (entry)
-            (let* ((symbol (nth 0 entry))
-                   (owners (eglox--setting-owners symbol)))
+            (let ((symbol (car entry))
+                  (bound (cadr entry))
+                  (value (cddr entry)))
               (cond
-               ((not (memq entry owners))
-                (unless owners
-                  (put symbol :setting-owners nil)))
-               ((eq entry (car owners))
-                (put symbol :setting-owners (cdr owners))
-                (if (nth 1 entry)
-                    (set-default symbol (nth 2 entry))
-                  (cond
-                   ((and (memq symbol '(dape-key-prefix dape-buffer-window-arrangement))
-                         (get symbol 'standard-value))
-                    (set-default symbol (eval (car (get symbol 'standard-value)) t)))
-                   ((not (seq-difference (eglox--definition-files symbol) (nth 4 entry)))
-                    (with-temp-buffer (makunbound symbol))))))
+               (bound
+                (set-default symbol value))
+               ((get symbol 'standard-value)
+                (set-default symbol (eval (car (get symbol 'standard-value)) t)))
                (t
-                (let ((above (seq-find (lambda (item) (eq (cadr (memq item owners)) entry))
-                                       owners)))
-                  (when above
-                    (setf (nth 1 above) (nth 1 entry))
-                    (setf (nth 2 above) (nth 2 entry))
-                    (setf (nth 4 above) (nth 4 entry)))
-                  (put symbol :setting-owners (delq entry owners)))))))
+                (makunbound symbol)))))
           eglox--saved-settings)
   (setq eglox--saved-settings nil))
-
-(defun eglox--apply-settings (&optional excluded above-entries)
-  "Apply defaults and overrides, ignoring unmanaged EXCLUDED symbols.
-When ABOVE-ENTRIES is non-nil, keep refreshed entries below active owners."
-  (let ((defaults (append (when eglox-configure-dape
-                            '((dape-key-prefix . nil)
-                              (dape-buffer-window-arrangement . right)))
-                          '((show-paren-delay . 0.25)
-                            (comment-auto-fill-only-comments . t)
-                            (makefile-electric-keys . t)
-                            (rust-mode-treesitter-derive . t)
-                            (rustic-lsp-client . eglot)
-                            (rustic-format-trigger . on-save)
-                            (rustic-cargo-clippy-trigger-fix . on-compile)
-                            (rustic-use-rust-save-some-buffers . t)
-                            (rustic-clippy-arguments . "--all --all-features -- --deny warnings")
-                            (terraform-format-on-save . t)
-                            (terraform-indent-level . 2)
-                            (web-mode-markup-indent-offset . 2)
-                            (web-mode-code-indent-offset . 2)
-                            (web-mode-css-indent-offset . 2)
-                            (js-indent-level . 2)
-                            (web-mode-enable-auto-pairing . t)
-                            (web-mode-enable-auto-expanding . t)
-                            (web-mode-enable-css-colorization . t))))
-        seen)
-    (seq-do (lambda (entry)
-              (let* ((symbol (car entry))
-                     (override (assq symbol eglox-setting-overrides))
-                     (value (if override
-                                (cdr override)
-                              (cdr entry))))
-                (unless (or (memq symbol seen)
-                            (eq value :eglox-skip)
-                            (and (memq symbol excluded) (not override)))
-                  (push symbol seen)
-                  (let* ((owners (eglox--setting-owners symbol))
-                         (above (cdr (assq symbol above-entries))))
-                    (if (and above (memq above owners))
-                        (let ((saved (list symbol (nth 1 above) (nth 2 above) value (nth 4 above)))
-                              (tail (memq above owners)))
-                          (setf (nth 1 above) t)
-                          (setf (nth 2 above) value)
-                          (setf (nth 4 above) (eglox--definition-files symbol))
-                          (setcdr tail (cons saved (cdr tail)))
-                          (push saved eglox--saved-settings))
-                      (let ((saved (list symbol (default-boundp symbol)
-                                         (and (default-boundp symbol) (default-value symbol))
-                                         value (eglox--definition-files symbol))))
-                        (put symbol :setting-owners (cons saved owners))
-                        (push saved eglox--saved-settings)
-                        (set-default symbol value)))))))
-            (append defaults
-                    (seq-remove (lambda (entry)
-                                  (or (assq (car entry) defaults)
-                                      (and (not eglox-configure-dape)
-                                           (memq (car entry)
-                                                 '(dape-key-prefix dape-buffer-window-arrangement)))))
-                                eglox-setting-overrides)))))
-
-(defun eglox-refresh-settings ()
-  "Refresh settings, preserving independently changed defaults unless overridden."
-  (interactive)
-  (when (bound-and-true-p eglox-global-mode)
-    (let ((above-entries
-           (seq-keep (lambda (entry)
-                       (let* ((symbol (car entry))
-                              (owners (eglox--setting-owners symbol))
-                              (above (seq-find (lambda (item)
-                                                 (eq (cadr (memq item owners)) entry))
-                                               owners)))
-                         (when above
-                           (cons symbol above))))
-                     eglox--saved-settings))
-          (changed
-           (seq-keep (lambda (entry)
-                       (let ((symbol (car entry)))
-                         (unless (memq entry (eglox--setting-owners symbol))
-                           symbol)))
-                     eglox--saved-settings)))
-      (setq eglox--relinquished-settings
-            (seq-uniq (append changed eglox--relinquished-settings)))
-      (setq eglox--relinquished-settings
-            (seq-remove (lambda (symbol) (assq symbol eglox-setting-overrides))
-                        eglox--relinquished-settings))
-      (eglox--restore-settings)
-      (eglox--apply-settings eglox--relinquished-settings above-entries))))
 
 (defcustom eglox-go-fill-column 100
   "Fill column for Go buffers."
@@ -967,80 +890,31 @@ When ABOVE-ENTRIES is non-nil, keep refreshed entries below active owners."
 
 (with-eval-after-load 'python (eglox--configure-python))
 
-(defvar eglox--configured-buffers nil
-  "Buffers whose local settings or minor modes were managed by Eglox.")
-(defvar-local eglox--local-settings nil)
-(defvar-local eglox--owned-local-modes nil)
-
-(defun eglox--set-local (symbol value)
-  "Apply VALUE to SYMBOL locally and remember its previous state."
-  (let* ((entry (assq symbol eglox--local-settings))
-         (new (not entry)))
-    (unless entry
-      (setq entry (list symbol (local-variable-p symbol)
-                        (and (boundp symbol) (symbol-value symbol)) value))
-      (push entry eglox--local-settings)
-      (add-to-list 'eglox--configured-buffers (current-buffer)))
-    (when (or new
-              (and (local-variable-p symbol)
-                   (boundp symbol)
-                   (equal (symbol-value symbol) (nth 3 entry))))
-      (set (make-local-variable symbol) value)
-      (setcar (nthcdr 3 entry) value))))
-
-(defun eglox--enable-local-mode (mode)
-  "Enable MODE when available and record ownership when newly enabled."
-  (when (and (fboundp mode) (not (and (boundp mode) (symbol-value mode))))
-    (funcall mode 1)
-    (when (and (boundp mode) (symbol-value mode))
-      (push mode eglox--owned-local-modes)
-      (add-to-list 'eglox--configured-buffers (current-buffer)))))
-
-(defun eglox--restore-local-buffers ()
-  "Restore owned buffer-local values and disable acquired minor modes."
-  (seq-do (lambda (buffer)
-            (when (buffer-live-p buffer)
-              (with-current-buffer buffer
-                (seq-do (lambda (entry)
-                          (let ((symbol (car entry)))
-                            (when (and (local-variable-p symbol)
-                                       (boundp symbol)
-                                       (equal (symbol-value symbol) (nth 3 entry)))
-                              (if (nth 1 entry)
-                                  (set symbol (nth 2 entry))
-                                (kill-local-variable symbol)))))
-                        eglox--local-settings)
-                (seq-do (lambda (mode)
-                          (when (and (boundp mode) (symbol-value mode) (fboundp mode))
-                            (funcall mode -1)))
-                        eglox--owned-local-modes)
-                (setq eglox--local-settings nil)
-                (setq eglox--owned-local-modes nil))))
-          eglox--configured-buffers)
-  (setq eglox--configured-buffers nil))
-
 (defun eglox--go-setup ()
   "Set defaults for Go buffers."
-  (eglox--set-local 'fill-column eglox-go-fill-column)
-  (eglox--set-local 'compilation-error-screen-columns nil))
+  (setq-local fill-column eglox-go-fill-column)
+  (setq-local compilation-error-screen-columns nil))
 
 (defun eglox--python-setup ()
   "Set defaults for Python buffers."
-  (eglox--set-local 'fill-column eglox-python-fill-column)
-  (eglox--set-local 'tab-width eglox-python-tab-width))
+  (setq-local fill-column eglox-python-fill-column)
+  (setq-local tab-width eglox-python-tab-width))
 
 (defun eglox--yaml-setup ()
   "Set defaults for YAML buffers."
-  (eglox--set-local 'tab-width eglox-yaml-tab-width)
-  (when eglox-enable-yaml-pro (eglox--enable-local-mode 'yaml-pro-mode)))
+  (setq-local tab-width eglox-yaml-tab-width)
+  (when (and eglox-enable-yaml-pro (fboundp 'yaml-pro-mode))
+    (yaml-pro-mode 1)))
 
 (defun eglox--rustic-setup ()
   "Avoid save prompts in file-visiting Rustic buffers."
-  (when buffer-file-name (eglox--set-local 'compilation-ask-about-save nil)))
+  (when buffer-file-name
+    (setq-local compilation-ask-about-save nil)))
 
 (defun eglox--elisp-setup ()
   "Enable Builder integration when available."
-  (when eglox-enable-builder-elisp (eglox--enable-local-mode 'builder-elisp-mode)))
+  (when (and eglox-enable-builder-elisp (fboundp 'builder-elisp-mode))
+    (builder-elisp-mode 1)))
 
 (defcustom eglox-enable-project-mode t
   "When non-nil, enable the independent project experience with Eglox."
@@ -1073,8 +947,6 @@ When ABOVE-ENTRIES is non-nil, keep refreshed entries below active owners."
     (eglox-project-mode -1)
     (setq eglox--owns-project-mode nil))
   (eglox--restore-settings)
-  (eglox--restore-local-buffers)
-  (setq eglox--relinquished-settings nil)
   (when eglox--python-keys
     (when (eq (lookup-key python-base-mode-map (kbd "M-<left>")) #'python-indent-shift-left)
       (keymap-set python-base-mode-map "M-<left>" (car eglox--python-keys)))
@@ -1094,8 +966,7 @@ When ABOVE-ENTRIES is non-nil, keep refreshed entries below active owners."
   (eglox--teardown-dape)
   (when (timerp eglox-activate-timer)
     (cancel-timer eglox-activate-timer)
-    (setq eglox-activate-timer nil))
-)
+    (setq eglox-activate-timer nil)))
 
 ;;;###autoload
 (define-minor-mode eglox-global-mode

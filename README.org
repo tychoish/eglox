@@ -14,7 +14,7 @@ workflows, language defaults, and project integration.
   - [[#installation-elpaish][ELPAish (Recommended)]]
   - [[#manual-installation][Manual Installation]]
 - [[#configuration][Configuration]]
-- [[#settings-overrides][Settings Overrides]]
+- [[#managed-settings][Managed Settings]]
 - [[#project-integration][Project Integration]]
 - [[#features][Features]]
   - [[#throttled-activation][Throttled Activation]]
@@ -83,34 +83,24 @@ Enable =eglox-global-mode= in your init:
   (eglox-global-mode 1))
 #+end_src
 
-* Settings Overrides
+* Managed Settings
 :PROPERTIES:
-:CUSTOM_ID: settings-overrides
+:CUSTOM_ID: managed-settings
 :END:
 
-Configure defaults before enabling the mode. Keys are quoted symbols, so the
-package that defines a variable need not be loaded first. An override may add a
-setting; nil is a value, and =:eglox-skip= leaves a setting unmanaged.
+Customize =eglox-settings= (an alist of =(SYMBOL . VALUE)= pairs) before enabling
+=eglox-global-mode= to adjust the global defaults managed by the mode. Disabling
+=eglox-global-mode= restores the saved prior defaults.
 
 #+begin_src emacs-lisp
-(setq eglox-setting-overrides
+(setq eglox-settings
       '((show-paren-delay . 0.25)
-        (makefile-electric-keys . nil)
-        (rustic-format-trigger . :eglox-skip)))
+        (makefile-electric-keys . nil)))
 #+end_src
 
-To change overrides while the mode is active, call =eglox-refresh-settings=.
-Refresh preserves an independently changed default unless an explicit override
-selects it. Disable restores defaults still owned by the mode, leaving subsequent
-independent changes alone. Settings affect default values, not existing
-buffer-local values. If a library defines a previously unbound setting while the
-mode is active, it remains bound when the mode is disabled.
-
-Go, Python and YAML buffer defaults have separate fill-column and tab-width
-options. Eglox restores its buffer-local settings when disabled, unless the
-user changed them, and disables YAML Pro or Builder modes only when it enabled
-them. Their integrations can be disabled with =eglox-enable-yaml-pro= and
-=eglox-enable-builder-elisp=.
+Go, Python, and YAML buffer defaults have separate fill-column and tab-width
+options, and YAML Pro or Builder integrations can be controlled with
+=eglox-enable-yaml-pro= and =eglox-enable-builder-elisp=.
 
 * Project Integration
 :PROPERTIES:
@@ -124,18 +114,20 @@ used independently, without loading Eglox or Eglot:
 #+begin_src emacs-lisp
 (require 'eglox-project)
 (setq eglox-project-mode-hooks '(prog-mode-hook my-project-mode-hook))
-(setq eglox-project-setting-overrides
-      '((projectile-use-git-grep . nil)
-        (popper-group-function . :eglox-project-skip)))
+(setq eglox-project-settings
+      '((popper-group-function . popper-group-by-projectile)
+        (compilation-save-buffers-predicate . project-current)
+        (projectile-use-git-grep . nil)
+        (projectile-enable-caching . persistent)
+        (projectile-require-project-root . nil)))
 (eglox-project-mode 1)
 #+end_src
 
 Loading the project module loads Projectile without enabling it. The mode preserves a
 Projectile mode that was already enabled. Configured hooks and project changes
-queue cold project caches for background warming. Project settings use the
-same default-value and guarded restoration rules as Eglox settings; call
-=eglox-project-refresh-settings= after changing overrides. The skip marker is
-=:eglox-project-skip=.
+queue cold project caches for background warming. =eglox-project-settings=
+captures the =(SYMBOL . VALUE)= defaults managed while =eglox-project-mode= is
+active and restored on disable.
 
 =eglox-project-cache-directory= selects the local directory for persistent
 Projectile caches (by default, =state/projectile-cache/= under

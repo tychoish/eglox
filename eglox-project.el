@@ -22,18 +22,18 @@
 (defcustom eglox-project-mode-hooks '(prog-mode-hook)
   "Hooks on which `eglox-project-mode' queues the current project cache."
   :type '(repeat symbol) :group 'eglox-project)
-(defcustom eglox-project-setting-overrides nil
-  "Alist of settings overriding project defaults.
-A value of :eglox-project-skip leaves a setting unmanaged; nil is a value.
-Call `eglox-project-refresh-settings' after changing this while active."
-  :type '(alist :key-type symbol :value-type sexp) :group 'eglox-project)
-(defconst eglox-project--settings
+(defcustom eglox-project-settings
   '((popper-group-function . popper-group-by-projectile)
     (compilation-save-buffers-predicate . project-current)
-    (projectile-use-git-grep . t) (projectile-enable-caching . persistent)
-    (projectile-require-project-root . nil)))
-(defvar eglox-project--saved-settings nil)
-(defvar eglox-project--relinquished-settings nil)
+    (projectile-use-git-grep . t)
+    (projectile-enable-caching . persistent)
+    (projectile-require-project-root . nil))
+  "Alist of `(SYMBOL . VALUE)' settings managed by `eglox-project-mode'."
+  :type '(alist :key-type symbol :value-type sexp)
+  :group 'eglox-project)
+
+(defvar eglox-project--saved-settings nil
+  "Saved prior settings recorded by `eglox-project--apply-settings'.")
 (defvar eglox-project--installed-hooks nil)
 (defvar eglox-project--owns-projectile nil)
 (defvar eglox-project--active nil)
@@ -57,107 +57,31 @@ Call `eglox-project-refresh-settings' after changing this while active."
         (set-file-modes directory #o700))
       (expand-file-name (concat (secure-hash 'sha256 identity) ".eld") directory))))
 
-(defun eglox-project--definition-files (symbol)
-  "Return loaded files recorded as defining SYMBOL."
-  (seq-keep (lambda (entry) (when (memq symbol (cdr entry)) (car entry)))
-            load-history))
-
-(defun eglox-project--setting-owners (symbol)
-  "Return active setting owner entries for SYMBOL when top owner still matches."
-  (let ((owners (get symbol :setting-owners)))
-    (when (and owners
-               (default-boundp symbol)
-               (equal (default-value symbol) (nth 3 (car owners))))
-      owners)))
-
-(defun eglox-project--restore-settings ()
-  "Restore defaults still owned by this mode.
-Keep a previously unbound symbol bound if a library defined it meanwhile."
-  (seq-do (lambda (entry)
-            (let* ((symbol (nth 0 entry))
-                   (owners (eglox-project--setting-owners symbol)))
-              (cond
-               ((not (memq entry owners))
-                (unless owners
-                  (put symbol :setting-owners nil)))
-               ((eq entry (car owners))
-                (put symbol :setting-owners (cdr owners))
-                (if (nth 1 entry)
-                    (set-default symbol (nth 2 entry))
-                  (unless (seq-difference (eglox-project--definition-files symbol)
-                                          (nth 4 entry))
-                    (with-temp-buffer (makunbound symbol)))))
-               (t
-                (let ((above (seq-find (lambda (item) (eq (cadr (memq item owners)) entry))
-                                       owners)))
-                  (when above
-                    (setf (nth 1 above) (nth 1 entry))
-                    (setf (nth 2 above) (nth 2 entry))
-                    (setf (nth 4 above) (nth 4 entry)))
-                  (put symbol :setting-owners (delq entry owners)))))))
-          eglox-project--saved-settings)
-  (setq eglox-project--saved-settings nil))
-
-(defun eglox-project--apply-settings (&optional excluded above-entries)
-  "Apply defaults and overrides, except independently changed EXCLUDED symbols.
-When ABOVE-ENTRIES is non-nil, keep refreshed entries below active owners."
-  (let ((settings (copy-tree eglox-project--settings))
-        seen)
-    (seq-do (lambda (entry) (setf (alist-get (car entry) settings) (cdr entry)))
-            eglox-project-setting-overrides)
+(defun eglox-project--apply-settings ()
+  "Apply `eglox-project-settings' and record prior default values."
+  (unless eglox-project--saved-settings
     (seq-do (lambda (entry)
               (let ((symbol (car entry))
                     (value (cdr entry)))
-                (unless (or (memq symbol seen)
-                            (eq value :eglox-project-skip)
-                            (and (memq symbol excluded)
-                                 (not (assq symbol eglox-project-setting-overrides))))
-                  (push symbol seen)
-                  (let* ((owners (eglox-project--setting-owners symbol))
-                         (above (cdr (assq symbol above-entries))))
-                    (if (and above (memq above owners))
-                        (let ((saved (list symbol (nth 1 above) (nth 2 above) value (nth 4 above)))
-                              (tail (memq above owners)))
-                          (setf (nth 1 above) t)
-                          (setf (nth 2 above) value)
-                          (setf (nth 4 above) (eglox-project--definition-files symbol))
-                          (setcdr tail (cons saved (cdr tail)))
-                          (push saved eglox-project--saved-settings))
-                      (let ((saved (list symbol (default-boundp symbol)
-                                         (when (default-boundp symbol) (default-value symbol))
-                                         value (eglox-project--definition-files symbol))))
-                        (put symbol :setting-owners (cons saved owners))
-                        (push saved eglox-project--saved-settings)
-                        (set-default symbol value)))))))
-            settings)))
+                (push (cons symbol
+                            (cons (default-boundp symbol)
+                                  (and (default-boundp symbol)
+                                       (default-value symbol))))
+                      eglox-project--saved-settings)
+                (set-default symbol value)))
+            eglox-project-settings)))
 
-(defun eglox-project-refresh-settings ()
-  "Reapply overrides and preserve independently changed unmanaged defaults."
-  (interactive)
-  (when eglox-project--active
-    (let ((above-entries
-           (seq-keep (lambda (entry)
-                       (let* ((symbol (car entry))
-                              (owners (eglox-project--setting-owners symbol))
-                              (above (seq-find (lambda (item)
-                                                 (eq (cadr (memq item owners)) entry))
-                                               owners)))
-                         (when above
-                           (cons symbol above))))
-                     eglox-project--saved-settings))
-          (changed
-           (seq-keep (lambda (entry)
-                       (let ((symbol (car entry)))
-                         (unless (memq entry (eglox-project--setting-owners symbol))
-                           symbol)))
-                     eglox-project--saved-settings)))
-      (setq eglox-project--relinquished-settings
-            (seq-uniq (append changed eglox-project--relinquished-settings)))
-      (setq eglox-project--relinquished-settings
-            (seq-remove (lambda (symbol) (assq symbol eglox-project-setting-overrides))
-                        eglox-project--relinquished-settings))
-      (eglox-project--restore-settings)
-      (eglox-project--apply-settings eglox-project--relinquished-settings above-entries))))
+(defun eglox-project--restore-settings ()
+  "Restore settings saved by `eglox-project--apply-settings'."
+  (seq-do (lambda (entry)
+            (let ((symbol (car entry))
+                  (bound (cadr entry))
+                  (value (cddr entry)))
+              (if bound
+                  (set-default symbol value)
+                (makunbound symbol))))
+          eglox-project--saved-settings)
+  (setq eglox-project--saved-settings nil))
 
 ;;;###autoload
 (defun projectile-save-buffers-in-directory (dir)
@@ -493,7 +417,6 @@ Cancels `eglox-projectile-warm-cache-idle-timer' when the queue is empty."
         (projectile-mode -1))
       (setq eglox-project--owns-projectile nil))
     (eglox-project--restore-settings)
-    (setq eglox-project--relinquished-settings nil)
     (setq eglox-project--active nil)))
 
 (provide 'eglox-project)

@@ -64,12 +64,11 @@
       (should (= yaml-calls 1))
       (should (= builder-calls 1)))))
 
-(ert-deftest eglox-language/deferred-language-setting-overrides ()
+(ert-deftest eglox-language/deferred-language-settings ()
   (let ((eglox--saved-settings nil)
-        (eglox-setting-overrides '((rustic-lsp-client . custom-client)
-                                   (terraform-indent-level . 5)
-                                   (web-mode-code-indent-offset . 7)))
-        (load-history (copy-tree load-history)))
+        (eglox-settings '((rustic-lsp-client . custom-client)
+                          (terraform-indent-level . 5)
+                          (web-mode-code-indent-offset . 7))))
     (unwind-protect
         (progn
           (eglox--apply-settings)
