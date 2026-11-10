@@ -867,6 +867,38 @@ Teardown must reset such a variable to its standard value, not `makunbound' it."
       (should (equal dape-key-prefix "\C-x\C-a"))
       (should (eq dape-buffer-window-arrangement 'left)))))
 
+(ert-deftest eglox/dape-settings-override-refresh-and-guard ()
+  "Dape settings use the same override and restoration contract."
+  (eglox-test--with-clean-dape-state
+    (let ((eglox-configure-dape t)
+          (eglox-setting-overrides '((dape-key-prefix . :eglox-skip)
+                                     (dape-buffer-window-arrangement . left))))
+      (setq dape-key-prefix "original")
+      (setq dape-buffer-window-arrangement 'bottom)
+      (eglox-global-mode 1)
+      (should (equal dape-key-prefix "original"))
+      (should (eq dape-buffer-window-arrangement 'left))
+      (setq dape-buffer-window-arrangement 'user-change)
+      (setq eglox-setting-overrides '((dape-key-prefix . nil)))
+      (eglox-refresh-settings)
+      (eglox-refresh-settings)
+      (should-not dape-key-prefix)
+      (should (eq dape-buffer-window-arrangement 'user-change))
+      (eglox-global-mode -1)
+      (should (equal dape-key-prefix "original"))
+      (should (eq dape-buffer-window-arrangement 'user-change)))))
+
+(ert-deftest eglox/dape-opt-out-ignores-explicit-setting-overrides ()
+  "The Dape opt-out also prevents settings overrides from taking effect."
+  (eglox-test--with-clean-dape-state
+    (let ((eglox-configure-dape nil)
+          (eglox-setting-overrides '((dape-key-prefix . nil))))
+      (setq dape-key-prefix "original")
+      (eglox-global-mode 1)
+      (should (equal dape-key-prefix "original"))
+      (eglox-global-mode -1)
+      (should (equal dape-key-prefix "original")))))
+
 (defmacro eglox-test--with-dape-feature (loaded &rest body)
   "Run BODY with the `dape' feature present when LOADED, absent otherwise.
 Restore the real `features' list afterward."

@@ -2,8 +2,8 @@
 #+author: sam kleinman
 #+email: sam@tychoish.com
 
-Eglot extensions, throttled buffer activation, server lifecycle management,
-and stability enhancements for Emacs LSP.
+A programming environment for Emacs combining Eglot LSP extensions, IDE
+workflows, language defaults, and project integration.
 
 * Table of Contents :TOC:
 :PROPERTIES:
@@ -14,6 +14,8 @@ and stability enhancements for Emacs LSP.
   - [[#installation-elpaish][ELPAish (Recommended)]]
   - [[#manual-installation][Manual Installation]]
 - [[#configuration][Configuration]]
+- [[#settings-overrides][Settings Overrides]]
+- [[#project-integration][Project Integration]]
 - [[#features][Features]]
   - [[#throttled-activation][Throttled Activation]]
   - [[#server-lifecycle--cleanup][Server Lifecycle & Cleanup]]
@@ -27,12 +29,14 @@ and stability enhancements for Emacs LSP.
 :CUSTOM_ID: overview
 :END:
 
-=eglox= provides stability enhancements and workflows around Emacs' built-in =eglot= LSP client:
+=eglox= combines LSP, IDE navigation, language-specific defaults, and project
+workflows for a multi-language programming environment. It extends Emacs'
+built-in =eglot= LSP client with:
 - Throttled buffer activation to prevent connection storms when opening multi-file projects.
 - Server lifecycle management: duplicate server pruning, dead connection cleanup, and reconnection resilience.
 - Structured keymaps under =C-c l= for Eglot commands, IDE navigation, debugging, and project-wide actions.
 - Dape debugging commands under =C-c l d=, with settings applied and restored by =eglox-global-mode=.
-- Automatic Projectile cache warming integration on project switch.
+- Optional Projectile project integration and cache warming.
 - Guarded completion-at-point handlers to prevent repetitive JSON-RPC errors.
 
 * Installation
@@ -78,6 +82,70 @@ Enable =eglox-global-mode= in your init:
   :init
   (eglox-global-mode 1))
 #+end_src
+
+* Settings Overrides
+:PROPERTIES:
+:CUSTOM_ID: settings-overrides
+:END:
+
+Configure defaults before enabling the mode. Keys are quoted symbols, so the
+package that defines a variable need not be loaded first. An override may add a
+setting; nil is a value, and =:eglox-skip= leaves a setting unmanaged.
+
+#+begin_src emacs-lisp
+(setq eglox-setting-overrides
+      '((show-paren-delay . 0.25)
+        (makefile-electric-keys . nil)
+        (rustic-format-trigger . :eglox-skip)))
+#+end_src
+
+To change overrides while the mode is active, call =eglox-refresh-settings=.
+Refresh preserves an independently changed default unless an explicit override
+selects it. Disable restores defaults still owned by the mode, leaving subsequent
+independent changes alone. Settings affect default values, not existing
+buffer-local values. If a library defines a previously unbound setting while the
+mode is active, it remains bound when the mode is disabled.
+
+Go, Python and YAML buffer defaults have separate fill-column and tab-width
+options. Eglox restores its buffer-local settings when disabled, unless the
+user changed them, and disables YAML Pro or Builder modes only when it enabled
+them. Their integrations can be disabled with =eglox-enable-yaml-pro= and
+=eglox-enable-builder-elisp=.
+
+* Project Integration
+:PROPERTIES:
+:CUSTOM_ID: project-integration
+:END:
+
+=eglox-global-mode= enables =eglox-project-mode= by default; set
+=eglox-enable-project-mode= to nil to opt out. Project integration can also be
+used independently, without loading Eglox or Eglot:
+
+#+begin_src emacs-lisp
+(require 'eglox-project)
+(setq eglox-project-mode-hooks '(prog-mode-hook my-project-mode-hook))
+(setq eglox-project-setting-overrides
+      '((projectile-use-git-grep . nil)
+        (popper-group-function . :eglox-project-skip)))
+(eglox-project-mode 1)
+#+end_src
+
+Loading the project module loads Projectile without enabling it. The mode preserves a
+Projectile mode that was already enabled. Configured hooks and project changes
+queue cold project caches for background warming. Project settings use the
+same default-value and guarded restoration rules as Eglox settings; call
+=eglox-project-refresh-settings= after changing overrides. The skip marker is
+=:eglox-project-skip=.
+
+=eglox-project-cache-directory= selects the local directory for persistent
+Projectile caches (by default, =state/projectile-cache/= under
+=user-emacs-directory=). Cache names use a hash of the complete project root,
+including remote identity, so projects with the same basename remain distinct.
+Existing in-tree Projectile cache files are left untouched; the central cache
+is populated afresh. Creating the cache directory restricts its permissions.
+The module also provides incremental project buffer loading, session restore,
+and bulk cache purge commands. Those operations use =gen= and the save-buffers
+picker uses =annotated-completing-read=.
 
 * Features
 :PROPERTIES:

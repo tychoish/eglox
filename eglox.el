@@ -3,7 +3,7 @@
 ;; Author: sam kleinman <sam@tychoish.com>
 ;; Maintainer: sam kleinman <sam@tychoish.com>
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "29.1"))
+;; Package-Requires: ((emacs "29.1") (projectile "2.0") (gen "0.1.0") (annotated-completing-read "0.1"))
 ;; Keywords: languages, tools, lsp, eglot
 ;; URL: https://github.com/tychoish/eglox
 
@@ -11,8 +11,10 @@
 
 ;;; Commentary:
 ;;
-;; Extensions, throttled activation, server lifecycle management, keymaps,
-;; and stability enhancements for Eglot (Emacs LSP client).
+;; Eglox provides a multi-language programming environment combining Eglot
+;; lifecycle management, IDE navigation and debugging, language defaults, and
+;; independently usable project integration.  `eglox-global-mode' composes
+;; these features; `eglox-project-mode' works without loading Eglot.
 ;;
 ;; Features:
 ;; - `eglox-mode': Buffer-local minor mode for Eglot-managed buffers, bundling
@@ -38,6 +40,16 @@
 (require 'map)
 (require 'subr-x)
 
+(autoload 'eglox-project-mode "eglox-project" nil t)
+(autoload 'eglox-projectile-cache-warm-p "eglox-project")
+(autoload 'eglox-projectile-warm-cache-process-queue "eglox-project")
+(autoload 'eglox-projectile-warm-cache-enqueue "eglox-project")
+(autoload 'eglox-projectile-warm-cache-for-buffer "eglox-project")
+(autoload 'eglox-projectile-warm-cache-on-project-change "eglox-project")
+(defvar eglox-project-mode)
+
+(declare-function python-indent-shift-left "python")
+(declare-function python-indent-shift-right "python")
 (declare-function projectile-project-root "projectile")
 (declare-function projectile-index-project-async "projectile")
 (declare-function projectile-load-project-cache "projectile")
@@ -386,9 +398,6 @@ suppresses dape's default global prefix in favor of `eglox-command-map'."
   :type 'boolean
   :group 'eglox)
 
-(defvar eglox--saved-dape-settings nil
-  "Saved dape configuration before `eglox-global-mode' was enabled.")
-
 (defun eglox--save-all-buffers ()
   "Save all modified file-visiting buffers without confirmation."
   (save-some-buffers t))
@@ -401,35 +410,13 @@ Emacs session that never debugged cannot signal an error."
     (dape-breakpoint-save)))
 
 (defun eglox--setup-dape ()
-  "Apply Dape settings and hooks when `eglox-configure-dape' is non-nil."
+  "Install Dape hooks when `eglox-configure-dape' is non-nil."
   (when eglox-configure-dape
-    (unless eglox--saved-dape-settings
-      (setq eglox--saved-dape-settings
-            (list (and (boundp 'dape-key-prefix) (cons t dape-key-prefix))
-                  (and (boundp 'dape-buffer-window-arrangement)
-                       (cons t dape-buffer-window-arrangement))))
-      (setq dape-key-prefix nil
-            dape-buffer-window-arrangement 'right)
-      (add-hook 'kill-emacs-hook #'eglox--save-dape-breakpoints)
-      (add-hook 'dape-start-hook #'eglox--save-all-buffers))))
-
-(defun eglox--restore-dape-variable (symbol entry)
-  "Restore SYMBOL from saved ENTRY, a cons of (t . VALUE) or nil.
-A nil ENTRY means SYMBOL was unbound when saved.  If Dape has since loaded
-and defined SYMBOL, reset it to its standard value instead of unbinding it."
-  (cond ((car-safe entry) (set symbol (cdr entry)))
-        ((get symbol 'standard-value)
-         (set symbol (eval (car (get symbol 'standard-value)) t)))
-        (t (makunbound symbol))))
+    (add-hook 'kill-emacs-hook #'eglox--save-dape-breakpoints)
+    (add-hook 'dape-start-hook #'eglox--save-all-buffers)))
 
 (defun eglox--teardown-dape ()
-  "Remove Dape hooks and restore previous settings."
-  (when eglox--saved-dape-settings
-    (eglox--restore-dape-variable 'dape-key-prefix
-                                  (nth 0 eglox--saved-dape-settings))
-    (eglox--restore-dape-variable 'dape-buffer-window-arrangement
-                                  (nth 1 eglox--saved-dape-settings))
-    (setq eglox--saved-dape-settings nil))
+  "Remove Dape lifecycle hooks."
   (remove-hook 'kill-emacs-hook #'eglox--save-dape-breakpoints)
   (remove-hook 'dape-start-hook #'eglox--save-all-buffers))
 
@@ -453,61 +440,6 @@ Prevents repeating jsonrpc errors when completion timers run after mode
 teardown."
   (when (eglot-current-server)
     (funcall orig-fn)))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;; Projectile Cache Warming
-
-(defconst eglox-projectile-warm-cache-idle-delay 3
-  "Seconds of idle time between warming queued Projectile caches.")
-
-(defconst eglox-projectile-warm-cache-chunk-size 3
-  "Maximum cold project roots to index per idle timer tick.")
-
-(defvar eglox-projectile-warm-cache-queue nil
-  "Project roots queued for background Projectile indexing.")
-
-(defvar eglox-projectile-warm-cache-idle-timer nil
-  "Idle timer that drains `eglox-projectile-warm-cache-queue'.")
-
-(defun eglox-projectile-cache-warm-p (root)
-  "Return non-nil if ROOT has an in-memory or on-disk Projectile cache."
-  (and (bound-and-true-p projectile-enable-caching)
-       (or (map-elt projectile-projects-cache root)
-           (and (eq projectile-enable-caching 'persistent)
-                (projectile-load-project-cache root)))))
-
-(defun eglox-projectile-warm-cache-process-queue ()
-  "Index cold projects from `eglox-projectile-warm-cache-queue' in batches.
-Cancels `eglox-projectile-warm-cache-idle-timer' when the queue is empty."
-  (if (null eglox-projectile-warm-cache-queue)
-      (when eglox-projectile-warm-cache-idle-timer
-        (cancel-timer eglox-projectile-warm-cache-idle-timer)
-        (setq eglox-projectile-warm-cache-idle-timer nil))
-    (dotimes (_ eglox-projectile-warm-cache-chunk-size)
-      (when-let* ((root (pop eglox-projectile-warm-cache-queue)))
-        (unless (eglox-projectile-cache-warm-p root)
-          (projectile-index-project-async root))))))
-
-(defun eglox-projectile-warm-cache-enqueue (root)
-  "Queue ROOT for background Projectile indexing if not already warm."
-  (unless (or (member root eglox-projectile-warm-cache-queue)
-              (eglox-projectile-cache-warm-p root))
-    (setq eglox-projectile-warm-cache-queue
-          (append eglox-projectile-warm-cache-queue (list root))))
-  (unless eglox-projectile-warm-cache-idle-timer
-    (setq eglox-projectile-warm-cache-idle-timer
-          (run-with-idle-timer eglox-projectile-warm-cache-idle-delay t
-                               #'eglox-projectile-warm-cache-process-queue))))
-
-(defun eglox-projectile-warm-cache-for-buffer ()
-  "Queue background Projectile indexing for the current buffer's project root."
-  (when-let* ((root (and (bound-and-true-p projectile-mode)
-                         (projectile-project-root))))
-    (eglox-projectile-warm-cache-enqueue root)))
-
-(defun eglox-projectile-warm-cache-on-project-change (_new-root _previous-root)
-  "Warm Projectile cache when switching projects."
-  (eglox-projectile-warm-cache-for-buffer))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Save Hooks & Actions
@@ -861,9 +793,273 @@ Only called when `eglot' is loaded and `eglox-global-mode' is enabled."
     (cancel-timer eglox-cleanup-stale-connections-timer)
     (setq eglox-cleanup-stale-connections-timer nil)))
 
+(defcustom eglox-setting-overrides nil
+  "Alist of symbol and value overrides for the programming experience.
+Use :eglox-skip to leave a default unmanaged; nil is a value.  Call
+`eglox-refresh-settings' after changing this while the mode is active."
+  :type '(alist :key-type symbol :value-type sexp) :group 'eglot)
+
+(defvar eglox--saved-settings nil)
+(defvar eglox--relinquished-settings nil)
+
+(defun eglox--definition-files (symbol)
+  "Return files recorded as defining SYMBOL."
+  (seq-keep (lambda (entry) (when (memq symbol (cdr entry)) (car entry)))
+            load-history))
+
+(defun eglox--setting-owners (symbol)
+  "Return active setting owner entries for SYMBOL when top owner still matches."
+  (let ((owners (get symbol :setting-owners)))
+    (when (and owners
+               (default-boundp symbol)
+               (equal (default-value symbol) (nth 3 (car owners))))
+      owners)))
+
+(defun eglox--restore-settings ()
+  "Restore defaults still owned by Eglox."
+  (seq-do (lambda (entry)
+            (let* ((symbol (nth 0 entry))
+                   (owners (eglox--setting-owners symbol)))
+              (cond
+               ((not (memq entry owners))
+                (unless owners
+                  (put symbol :setting-owners nil)))
+               ((eq entry (car owners))
+                (put symbol :setting-owners (cdr owners))
+                (if (nth 1 entry)
+                    (set-default symbol (nth 2 entry))
+                  (cond
+                   ((and (memq symbol '(dape-key-prefix dape-buffer-window-arrangement))
+                         (get symbol 'standard-value))
+                    (set-default symbol (eval (car (get symbol 'standard-value)) t)))
+                   ((not (seq-difference (eglox--definition-files symbol) (nth 4 entry)))
+                    (with-temp-buffer (makunbound symbol))))))
+               (t
+                (let ((above (seq-find (lambda (item) (eq (cadr (memq item owners)) entry))
+                                       owners)))
+                  (when above
+                    (setf (nth 1 above) (nth 1 entry))
+                    (setf (nth 2 above) (nth 2 entry))
+                    (setf (nth 4 above) (nth 4 entry)))
+                  (put symbol :setting-owners (delq entry owners)))))))
+          eglox--saved-settings)
+  (setq eglox--saved-settings nil))
+
+(defun eglox--apply-settings (&optional excluded above-entries)
+  "Apply defaults and overrides, ignoring unmanaged EXCLUDED symbols.
+When ABOVE-ENTRIES is non-nil, keep refreshed entries below active owners."
+  (let ((defaults (append (when eglox-configure-dape
+                            '((dape-key-prefix . nil)
+                              (dape-buffer-window-arrangement . right)))
+                          '((show-paren-delay . 0.25)
+                            (comment-auto-fill-only-comments . t)
+                            (makefile-electric-keys . t)
+                            (rust-mode-treesitter-derive . t)
+                            (rustic-lsp-client . eglot)
+                            (rustic-format-trigger . on-save)
+                            (rustic-cargo-clippy-trigger-fix . on-compile)
+                            (rustic-use-rust-save-some-buffers . t)
+                            (rustic-clippy-arguments . "--all --all-features -- --deny warnings")
+                            (terraform-format-on-save . t)
+                            (terraform-indent-level . 2)
+                            (web-mode-markup-indent-offset . 2)
+                            (web-mode-code-indent-offset . 2)
+                            (web-mode-css-indent-offset . 2)
+                            (js-indent-level . 2)
+                            (web-mode-enable-auto-pairing . t)
+                            (web-mode-enable-auto-expanding . t)
+                            (web-mode-enable-css-colorization . t))))
+        seen)
+    (seq-do (lambda (entry)
+              (let* ((symbol (car entry))
+                     (override (assq symbol eglox-setting-overrides))
+                     (value (if override
+                                (cdr override)
+                              (cdr entry))))
+                (unless (or (memq symbol seen)
+                            (eq value :eglox-skip)
+                            (and (memq symbol excluded) (not override)))
+                  (push symbol seen)
+                  (let* ((owners (eglox--setting-owners symbol))
+                         (above (cdr (assq symbol above-entries))))
+                    (if (and above (memq above owners))
+                        (let ((saved (list symbol (nth 1 above) (nth 2 above) value (nth 4 above)))
+                              (tail (memq above owners)))
+                          (setf (nth 1 above) t)
+                          (setf (nth 2 above) value)
+                          (setf (nth 4 above) (eglox--definition-files symbol))
+                          (setcdr tail (cons saved (cdr tail)))
+                          (push saved eglox--saved-settings))
+                      (let ((saved (list symbol (default-boundp symbol)
+                                         (and (default-boundp symbol) (default-value symbol))
+                                         value (eglox--definition-files symbol))))
+                        (put symbol :setting-owners (cons saved owners))
+                        (push saved eglox--saved-settings)
+                        (set-default symbol value)))))))
+            (append defaults
+                    (seq-remove (lambda (entry)
+                                  (or (assq (car entry) defaults)
+                                      (and (not eglox-configure-dape)
+                                           (memq (car entry)
+                                                 '(dape-key-prefix dape-buffer-window-arrangement)))))
+                                eglox-setting-overrides)))))
+
+(defun eglox-refresh-settings ()
+  "Refresh settings, preserving independently changed defaults unless overridden."
+  (interactive)
+  (when (bound-and-true-p eglox-global-mode)
+    (let ((above-entries
+           (seq-keep (lambda (entry)
+                       (let* ((symbol (car entry))
+                              (owners (eglox--setting-owners symbol))
+                              (above (seq-find (lambda (item)
+                                                 (eq (cadr (memq item owners)) entry))
+                                               owners)))
+                         (when above
+                           (cons symbol above))))
+                     eglox--saved-settings))
+          (changed
+           (seq-keep (lambda (entry)
+                       (let ((symbol (car entry)))
+                         (unless (memq entry (eglox--setting-owners symbol))
+                           symbol)))
+                     eglox--saved-settings)))
+      (setq eglox--relinquished-settings
+            (seq-uniq (append changed eglox--relinquished-settings)))
+      (setq eglox--relinquished-settings
+            (seq-remove (lambda (symbol) (assq symbol eglox-setting-overrides))
+                        eglox--relinquished-settings))
+      (eglox--restore-settings)
+      (eglox--apply-settings eglox--relinquished-settings above-entries))))
+
+(defcustom eglox-go-fill-column 100
+  "Fill column for Go buffers."
+  :type 'integer :group 'eglot)
+(defcustom eglox-python-fill-column 100
+  "Fill column for Python buffers."
+  :type 'integer :group 'eglot)
+(defcustom eglox-python-tab-width 4
+  "Tab width for Python buffers."
+  :type 'integer :group 'eglot)
+(defcustom eglox-yaml-tab-width 2
+  "Tab width for YAML buffers."
+  :type 'integer :group 'eglot)
+(defcustom eglox-enable-yaml-pro t
+  "When non-nil, enable yaml-pro when available."
+  :type 'boolean :group 'eglot)
+(defcustom eglox-enable-builder-elisp t
+  "When non-nil, enable Builder integration when available."
+  :type 'boolean :group 'eglot)
+
+(defvar eglox--python-keys nil)
+(defvar python-base-mode-map)
+
+(defun eglox--configure-python ()
+  "Install Python bindings while the global mode is active."
+  (when (and eglox-global-mode (boundp 'python-base-mode-map)
+             (not eglox--python-keys))
+    (setq eglox--python-keys
+          (list (lookup-key python-base-mode-map (kbd "M-<left>"))
+                (lookup-key python-base-mode-map (kbd "M-<right>"))))
+    (keymap-set python-base-mode-map "M-<left>" #'python-indent-shift-left)
+    (keymap-set python-base-mode-map "M-<right>" #'python-indent-shift-right)
+    (font-lock-add-keywords 'python-ts-mode '(("\t" 0 'trailing-whitespace prepend)))))
+
+(with-eval-after-load 'python (eglox--configure-python))
+
+(defvar eglox--configured-buffers nil
+  "Buffers whose local settings or minor modes were managed by Eglox.")
+(defvar-local eglox--local-settings nil)
+(defvar-local eglox--owned-local-modes nil)
+
+(defun eglox--set-local (symbol value)
+  "Apply VALUE to SYMBOL locally and remember its previous state."
+  (let* ((entry (assq symbol eglox--local-settings))
+         (new (not entry)))
+    (unless entry
+      (setq entry (list symbol (local-variable-p symbol)
+                        (and (boundp symbol) (symbol-value symbol)) value))
+      (push entry eglox--local-settings)
+      (add-to-list 'eglox--configured-buffers (current-buffer)))
+    (when (or new
+              (and (local-variable-p symbol)
+                   (boundp symbol)
+                   (equal (symbol-value symbol) (nth 3 entry))))
+      (set (make-local-variable symbol) value)
+      (setcar (nthcdr 3 entry) value))))
+
+(defun eglox--enable-local-mode (mode)
+  "Enable MODE when available and record ownership when newly enabled."
+  (when (and (fboundp mode) (not (and (boundp mode) (symbol-value mode))))
+    (funcall mode 1)
+    (when (and (boundp mode) (symbol-value mode))
+      (push mode eglox--owned-local-modes)
+      (add-to-list 'eglox--configured-buffers (current-buffer)))))
+
+(defun eglox--restore-local-buffers ()
+  "Restore owned buffer-local values and disable acquired minor modes."
+  (seq-do (lambda (buffer)
+            (when (buffer-live-p buffer)
+              (with-current-buffer buffer
+                (seq-do (lambda (entry)
+                          (let ((symbol (car entry)))
+                            (when (and (local-variable-p symbol)
+                                       (boundp symbol)
+                                       (equal (symbol-value symbol) (nth 3 entry)))
+                              (if (nth 1 entry)
+                                  (set symbol (nth 2 entry))
+                                (kill-local-variable symbol)))))
+                        eglox--local-settings)
+                (seq-do (lambda (mode)
+                          (when (and (boundp mode) (symbol-value mode) (fboundp mode))
+                            (funcall mode -1)))
+                        eglox--owned-local-modes)
+                (setq eglox--local-settings nil)
+                (setq eglox--owned-local-modes nil))))
+          eglox--configured-buffers)
+  (setq eglox--configured-buffers nil))
+
+(defun eglox--go-setup ()
+  "Set defaults for Go buffers."
+  (eglox--set-local 'fill-column eglox-go-fill-column)
+  (eglox--set-local 'compilation-error-screen-columns nil))
+
+(defun eglox--python-setup ()
+  "Set defaults for Python buffers."
+  (eglox--set-local 'fill-column eglox-python-fill-column)
+  (eglox--set-local 'tab-width eglox-python-tab-width))
+
+(defun eglox--yaml-setup ()
+  "Set defaults for YAML buffers."
+  (eglox--set-local 'tab-width eglox-yaml-tab-width)
+  (when eglox-enable-yaml-pro (eglox--enable-local-mode 'yaml-pro-mode)))
+
+(defun eglox--rustic-setup ()
+  "Avoid save prompts in file-visiting Rustic buffers."
+  (when buffer-file-name (eglox--set-local 'compilation-ask-about-save nil)))
+
+(defun eglox--elisp-setup ()
+  "Enable Builder integration when available."
+  (when eglox-enable-builder-elisp (eglox--enable-local-mode 'builder-elisp-mode)))
+
+(defcustom eglox-enable-project-mode t
+  "When non-nil, enable the independent project experience with Eglox."
+  :type 'boolean :group 'eglot)
+(defvar eglox--owns-project-mode nil)
+(defvar eglox--global-active nil)
+
 (defun eglox--enable-global ()
   "Enable global Eglot extensions, mode hooks, and projectile integration."
-  (add-hook 'projectile-project-changed-functions #'eglox-projectile-warm-cache-on-project-change)
+  (when (and eglox-enable-project-mode (not eglox-project-mode))
+    (eglox-project-mode 1)
+    (setq eglox--owns-project-mode t))
+  (eglox--apply-settings)
+  (eglox--configure-python)
+  (add-hook 'go-ts-mode-hook #'eglox--go-setup)
+  (add-hook 'python-ts-mode-hook #'eglox--python-setup)
+  (add-hook 'yaml-mode-hook #'eglox--yaml-setup)
+  (add-hook 'rustic-mode-hook #'eglox--rustic-setup)
+  (add-hook 'emacs-lisp-mode-hook #'eglox--elisp-setup)
   (add-hook 'window-selection-change-functions #'eglox-activate-prioritize-visible)
   (dolist (hook eglox-mode-hooks)
     (add-hook hook #'eglox-ensure))
@@ -873,7 +1069,24 @@ Only called when `eglot' is loaded and `eglox-global-mode' is enabled."
 
 (defun eglox--disable-global ()
   "Disable global Eglot extensions, mode hooks, timers, and advices."
-  (remove-hook 'projectile-project-changed-functions #'eglox-projectile-warm-cache-on-project-change)
+  (when eglox--owns-project-mode
+    (eglox-project-mode -1)
+    (setq eglox--owns-project-mode nil))
+  (eglox--restore-settings)
+  (eglox--restore-local-buffers)
+  (setq eglox--relinquished-settings nil)
+  (when eglox--python-keys
+    (when (eq (lookup-key python-base-mode-map (kbd "M-<left>")) #'python-indent-shift-left)
+      (keymap-set python-base-mode-map "M-<left>" (car eglox--python-keys)))
+    (when (eq (lookup-key python-base-mode-map (kbd "M-<right>")) #'python-indent-shift-right)
+      (keymap-set python-base-mode-map "M-<right>" (cadr eglox--python-keys)))
+    (font-lock-remove-keywords 'python-ts-mode '(("\t" 0 'trailing-whitespace prepend)))
+    (setq eglox--python-keys nil))
+  (remove-hook 'go-ts-mode-hook #'eglox--go-setup)
+  (remove-hook 'python-ts-mode-hook #'eglox--python-setup)
+  (remove-hook 'yaml-mode-hook #'eglox--yaml-setup)
+  (remove-hook 'rustic-mode-hook #'eglox--rustic-setup)
+  (remove-hook 'emacs-lisp-mode-hook #'eglox--elisp-setup)
   (remove-hook 'window-selection-change-functions #'eglox-activate-prioritize-visible)
   (dolist (hook eglox-mode-hooks)
     (remove-hook hook #'eglox-ensure))
@@ -882,9 +1095,7 @@ Only called when `eglot' is loaded and `eglox-global-mode' is enabled."
   (when (timerp eglox-activate-timer)
     (cancel-timer eglox-activate-timer)
     (setq eglox-activate-timer nil))
-  (when (timerp eglox-projectile-warm-cache-idle-timer)
-    (cancel-timer eglox-projectile-warm-cache-idle-timer)
-    (setq eglox-projectile-warm-cache-idle-timer nil)))
+)
 
 ;;;###autoload
 (define-minor-mode eglox-global-mode
@@ -892,9 +1103,17 @@ Only called when `eglot' is loaded and `eglox-global-mode' is enabled."
   :global t
   :keymap eglox-global-mode-map
   :group 'eglot
-  (if eglox-global-mode
-      (eglox--enable-global)
-    (eglox--disable-global)))
+  (cond
+   ((and eglox-global-mode (not eglox--global-active))
+    (setq eglox--global-active t)
+    (condition-case err
+        (eglox--enable-global)
+      (error
+       (eglox-global-mode -1)
+       (signal (car err) (cdr err)))))
+   ((and (not eglox-global-mode) eglox--global-active)
+    (eglox--disable-global)
+    (setq eglox--global-active nil))))
 
 (provide 'eglox)
 ;;; eglox.el ends here
