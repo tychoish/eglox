@@ -27,10 +27,8 @@ jobs:
 
       - name: Lint Source Code
         uses: tychoish/elisp-ci/lint@main
-        with:
-          dependencies: "projectile cmdr"
 
       - name: Run Tests
         uses: tychoish/elisp-ci@main
         with:
-          dependencies: "projectile cmdr"
+          dependencies: "projectile gen annotated-completing-read cmdr"

@@ -46,6 +46,7 @@
 (declare-function projectile-project-root "projectile")
 (declare-function projectile-load-project-cache "projectile")
 (declare-function projectile-index-project-async "projectile")
+(declare-function gen-run-async "gen" (fn sequence &rest args))
 
 (defun eglox-project--cache-file (_original &optional root)
   "Return a local cache filename for ROOT without touching its project tree."
