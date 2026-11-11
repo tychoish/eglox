@@ -72,5 +72,36 @@
         (eglox--elisp-setup)
         (should builder-elisp-mode)))))
 
+(defvar eglox-test-hook-a nil)
+(defvar eglox-test-hook-b nil)
+
+(ert-deftest eglox-modes-merge-and-initialize ()
+  (let* ((current '(("\\.py\\'" . python-mode)
+                    ("\\.el\\'" . emacs-lisp-mode)))
+         (new '(("\\.py\\'" . python-ts-mode)
+                ("\\.go\\'" . go-ts-mode)))
+         (merged (eglox-modes-merge-alist current new)))
+    (should (equal merged
+                   '(("\\.py\\'" . python-ts-mode)
+                     ("\\.go\\'" . go-ts-mode)
+                     ("\\.el\\'" . emacs-lisp-mode)))))
+  (let ((auto-mode-alist '(("\\.py\\'" . python-mode))))
+    (eglox-modes-initialize)
+    (should (eq (cdr (assoc "\\.py\\'" auto-mode-alist)) 'python-ts-mode))
+    (should (eq (cdr (assoc "\\.rs\\'" auto-mode-alist)) 'rustic-mode))))
+
+(ert-deftest eglox-configurable-mode-hooks ()
+  (let ((eglox-test-hook-a nil)
+        (eglox-test-hook-b nil)
+        (eglox-mode-hooks '((eglox-test-hook-a . eglox-ensure)
+                            (eglox-test-hook-b . (eglox--go-setup eglox-ensure)))))
+    (eglox--add-hooks)
+    (should (equal eglox-test-hook-a '(eglox-ensure)))
+    (should (equal (sort (copy-sequence eglox-test-hook-b) #'string<)
+                   '(eglox--go-setup eglox-ensure)))
+    (eglox--remove-hooks)
+    (should-not eglox-test-hook-a)
+    (should-not eglox-test-hook-b)))
+
 (provide 'test-eglox-defaults)
 ;;; test-eglox-defaults.el ends here
