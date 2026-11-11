@@ -300,6 +300,8 @@ or `describe-symbol' as fallback."
     ("\\.json\\'" . json-ts-mode)
     ("\\.toml\\'" . toml-ts-mode)
     ("CMakeLists.txt" . cmake-ts-mode)
+    ("\\.lisp\\'" . lisp-mode)
+    ("\\.h\\'" . c-or-c++-mode)
     ("\\.c\\'" . c-ts-mode)
     ("\\.cpp\\'" . c++-ts-mode)
     ("\\.cc\\'" . c++-ts-mode)
