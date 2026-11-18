@@ -156,6 +156,20 @@ When multiple programming buffers are loaded at once (e.g. during session restor
 (eglox-activate-flush-queue)
 #+end_src
 
+*** Deferred Activation Policy
+
+During bulk operations such as staged desktop restore, =eglox-activation-policy= can be bound
+to ='when-visible=. In this mode, =eglox-ensure= records undisplayed buffers in
+=eglox-dormant-buffers= instead of initializing LSP immediately. As windows display dormant
+buffers, =window-buffer-change-functions= activates them through the throttle.
+
+*** Project Server Warming
+
+=eglox-warm-projects= (default 1) controls how many distinct project roots may have an
+Eglot server started eagerly on hidden buffers during restore. When =eglox-warm-project=
+is called on a buffer belonging to an unwarmed project, it activates Eglot immediately
+so indexing overlaps with early user interaction.
+
 ** Server Lifecycle & Cleanup
 :PROPERTIES:
 :CUSTOM_ID: server-lifecycle--cleanup
