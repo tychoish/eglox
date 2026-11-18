@@ -50,6 +50,8 @@
 
 (declare-function python-indent-shift-left "python")
 (declare-function python-indent-shift-right "python")
+(declare-function project-current "project")
+(declare-function project-root "project")
 (declare-function projectile-project-root "projectile")
 (declare-function projectile-index-project-async "projectile")
 (declare-function projectile-load-project-cache "projectile")
@@ -477,6 +479,14 @@ Rest argument _ARGS is ignored so this can be used on hooks or advices."
         caps))
     (eglox--install-eglot-integrations)))
 
+(defvar eglox-activation-policy nil
+  "Policy controlling Eglot activation timing.
+When `when-visible', defer activation for undisplayed buffers until first
+display.")
+
+(defvar eglox-dormant-buffers nil
+  "Buffers deferred for Eglot activation until displayed.")
+
 ;;;###autoload
 (defun eglox-ensure ()
   "Initialize Eglot and ensure it manages the current buffer."
@@ -707,13 +717,6 @@ is currently in flight for PROJECT."
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Throttled Buffer Activation
-
-(defvar eglox-activation-policy nil
-  "Policy controlling Eglot activation timing.
-When `when-visible', defer activation for undisplayed buffers until first display.")
-
-(defvar eglox-dormant-buffers nil
-  "Buffers deferred for Eglot activation until displayed.")
 
 (defcustom eglox-warm-projects 1
   "Number of active projects to warm an Eglot server for during restore."
