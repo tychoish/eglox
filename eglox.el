@@ -482,7 +482,11 @@ Rest argument _ARGS is ignored so this can be used on hooks or advices."
   "Initialize Eglot and ensure it manages the current buffer."
   (interactive)
   (eglox--init-eglot)
-  (eglot-ensure))
+  (if (and (eq eglox-activation-policy 'when-visible)
+           (null (get-buffer-window (current-buffer) t)))
+      (unless (memq (current-buffer) eglox-dormant-buffers)
+        (push (current-buffer) eglox-dormant-buffers))
+    (eglot-ensure)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Dape Integration
@@ -704,6 +708,21 @@ is currently in flight for PROJECT."
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Throttled Buffer Activation
 
+(defvar eglox-activation-policy nil
+  "Policy controlling Eglot activation timing.
+When `when-visible', defer activation for undisplayed buffers until first display.")
+
+(defvar eglox-dormant-buffers nil
+  "Buffers deferred for Eglot activation until displayed.")
+
+(defcustom eglox-warm-projects 1
+  "Number of active projects to warm an Eglot server for during restore."
+  :type 'natnum
+  :group 'eglot)
+
+(defvar eglox-warmed-projects nil
+  "List of project roots that have had a server warmed.")
+
 (defconst eglox-activate-burst-limit 3
   "Maximum buffers activated within `eglox-activate-burst-window' before queuing.")
 
@@ -738,6 +757,11 @@ is currently in flight for PROJECT."
 (defun eglox-activate-prune-queue ()
   "Drop dead, empty, and already managed buffers from `eglox-activate-queue'.
 Return the number of buffers removed."
+  (setq eglox-dormant-buffers
+        (seq-filter (lambda (b)
+                      (and (buffer-live-p b)
+                           (not (bound-and-true-p eglot--managed-mode))))
+                    eglox-dormant-buffers))
   (let ((before (length eglox-activate-queue)))
     (setq eglox-activate-queue
           (seq-filter #'eglox-activate-buffer-pending-p eglox-activate-queue))
@@ -844,6 +868,40 @@ Surplus buffers are queued in `eglox-activate-queue'."
       (with-current-buffer buf
         (eglot--maybe-activate-editing-mode)))))
 
+(defun eglox-activate-dormant-visible (&optional window-or-frame)
+  "Activate dormant Eglot buffers displayed in WINDOW-OR-FRAME."
+  (when eglox-dormant-buffers
+    (let ((windows (cond
+                    ((windowp window-or-frame) (list window-or-frame))
+                    ((framep window-or-frame) (window-list window-or-frame))
+                    (t (window-list)))))
+      (dolist (win windows)
+        (when (window-live-p win)
+          (let ((buf (window-buffer win)))
+            (when (and (buffer-live-p buf)
+                       (memq buf eglox-dormant-buffers))
+              (setq eglox-dormant-buffers (delq buf eglox-dormant-buffers))
+              (with-current-buffer buf
+                (eglot-ensure)))))))))
+
+;;;###autoload
+(defun eglox-warm-project (buffer)
+  "Activate Eglot in a hidden BUFFER when no server exists for its project.
+Only warms up to `eglox-warm-projects' distinct projects."
+  (when (and (buffer-live-p buffer)
+             (> eglox-warm-projects 0)
+             (< (length eglox-warmed-projects) eglox-warm-projects))
+    (with-current-buffer buffer
+      (when-let* ((file (or buffer-file-name default-directory))
+                  (proj (project-current nil file))
+                  (root (project-root proj)))
+        (unless (member root eglox-warmed-projects)
+          (push root eglox-warmed-projects)
+          (when (memq buffer eglox-dormant-buffers)
+            (setq eglox-dormant-buffers (delq buffer eglox-dormant-buffers)))
+          (eglot-ensure)
+          t)))))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;; Minor Modes (Local & Global)
 
@@ -877,6 +935,8 @@ Only called when `eglot' is loaded and `eglox-global-mode' is enabled."
     (add-hook 'eglot-connect-hook #'eglox-prune-duplicate-servers)
     (add-hook 'eglot-server-initialized-hook #'eglox-mark-connecting)
     (add-hook 'eglot-connect-hook #'eglox-unmark-connecting)
+    (add-hook 'window-buffer-change-functions #'eglox-activate-dormant-visible)
+    (add-hook 'window-buffer-change-functions #'eglox-activate-prioritize-visible)
     (unless (timerp eglox-cleanup-stale-connections-timer)
       (setq eglox-cleanup-stale-connections-timer
             (run-with-idle-timer 300 t #'eglox-cleanup-stale-connections)))))
@@ -891,6 +951,8 @@ Only called when `eglot' is loaded and `eglox-global-mode' is enabled."
   (remove-hook 'eglot-connect-hook #'eglox-prune-duplicate-servers)
   (remove-hook 'eglot-server-initialized-hook #'eglox-mark-connecting)
   (remove-hook 'eglot-connect-hook #'eglox-unmark-connecting)
+  (remove-hook 'window-buffer-change-functions #'eglox-activate-dormant-visible)
+  (remove-hook 'window-buffer-change-functions #'eglox-activate-prioritize-visible)
   (when (timerp eglox-cleanup-stale-connections-timer)
     (cancel-timer eglox-cleanup-stale-connections-timer)
     (setq eglox-cleanup-stale-connections-timer nil)))
@@ -1053,6 +1115,8 @@ Only called when `eglot' is loaded and `eglox-global-mode' is enabled."
   (eglox--remove-hooks)
   (eglox--uninstall-eglot-integrations)
   (eglox--teardown-dape)
+  (setq eglox-dormant-buffers nil
+        eglox-warmed-projects nil)
   (when (timerp eglox-activate-timer)
     (cancel-timer eglox-activate-timer)
     (setq eglox-activate-timer nil)))
