@@ -113,6 +113,7 @@
 
 (defvar dape-key-prefix)
 (defvar dape-buffer-window-arrangement)
+(defvar electric-pair-pairs)
 
 (defvar projectile-projects-cache)
 (defvar projectile-enable-caching)
@@ -968,6 +969,9 @@ Only called when `eglot' is loaded and `eglox-global-mode' is enabled."
             (show-paren-delay . 0.25)
             (comment-auto-fill-only-comments . t)
             (makefile-electric-keys . t)
+            (electric-pair-pairs . ((?< . ?>)
+                                    (?{ . ?})
+                                    (?\[ . ?\])))
             (rust-mode-treesitter-derive . t)
             (rustic-lsp-client . eglot)
             (rustic-format-trigger . on-save)
@@ -998,12 +1002,18 @@ Only called when `eglot' is loaded and `eglox-global-mode' is enabled."
                     (value (cdr entry)))
                 (unless (and (not eglox-configure-dape)
                              (memq symbol '(dape-key-prefix dape-buffer-window-arrangement)))
-                  (push (cons symbol
-                              (cons (default-boundp symbol)
-                                    (and (default-boundp symbol)
-                                         (default-value symbol))))
-                        eglox--saved-settings)
-                  (set-default symbol value))))
+                  (when (eq symbol 'electric-pair-pairs)
+                    (require 'elec-pair))
+                  (let ((prior (and (default-boundp symbol)
+                                    (default-value symbol))))
+                    (push (cons symbol
+                                (cons (default-boundp symbol)
+                                      (if (consp prior) (copy-sequence prior) prior)))
+                          eglox--saved-settings))
+                  (if (eq symbol 'electric-pair-pairs)
+                      (dolist (pair value)
+                        (add-to-list 'electric-pair-pairs pair))
+                    (set-default symbol value)))))
             eglox-settings)))
 
 (defun eglox--restore-settings ()
@@ -1087,10 +1097,15 @@ Only called when `eglot' is loaded and `eglox-global-mode' is enabled."
   "When non-nil, enable the independent project experience with Eglox."
   :type 'boolean :group 'eglot)
 (defvar eglox--owns-project-mode nil)
+(defvar eglox--owns-electric-pair-mode nil)
 (defvar eglox--global-active nil)
 
 (defun eglox--enable-global ()
   "Enable global Eglot extensions, mode hooks, and projectile integration."
+  (require 'elec-pair)
+  (when (not electric-pair-mode)
+    (electric-pair-mode 1)
+    (setq eglox--owns-electric-pair-mode t))
   (when (and eglox-enable-project-mode (not eglox-project-mode))
     (eglox-project-mode 1)
     (setq eglox--owns-project-mode t))
@@ -1104,6 +1119,9 @@ Only called when `eglot' is loaded and `eglox-global-mode' is enabled."
 
 (defun eglox--disable-global ()
   "Disable global Eglot extensions, mode hooks, timers, and advices."
+  (when eglox--owns-electric-pair-mode
+    (electric-pair-mode -1)
+    (setq eglox--owns-electric-pair-mode nil))
   (when eglox--owns-project-mode
     (eglox-project-mode -1)
     (setq eglox--owns-project-mode nil))

@@ -27,6 +27,23 @@
       (eglox--restore-settings)
       (makunbound 'eglox-test-unbound))))
 
+(ert-deftest eglox-electric-pair-settings-apply-and-restore ()
+  "Electric pair pairs are added on apply and removed on restore."
+  (require 'elec-pair)
+  (let ((orig (default-value 'electric-pair-pairs))
+        (eglox--saved-settings nil))
+    (unwind-protect
+        (progn
+          (set-default 'electric-pair-pairs '((?\" . ?\")))
+          (eglox--apply-settings)
+          (should (member '(?< . ?>) (default-value 'electric-pair-pairs)))
+          (should (member '(?{ . ?}) (default-value 'electric-pair-pairs)))
+          (should (member '(?\[ . ?\]) (default-value 'electric-pair-pairs)))
+          (should (member '(?\" . ?\") (default-value 'electric-pair-pairs)))
+          (eglox--restore-settings)
+          (should (equal (default-value 'electric-pair-pairs) '((?\" . ?\")))))
+      (set-default 'electric-pair-pairs orig))))
+
 (ert-deftest eglox-global-mode-rolls-back-on-error ()
   "A failed activation releases the project integration it acquired."
   (let ((eglox-global-mode nil)
