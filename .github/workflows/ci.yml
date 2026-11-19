@@ -22,13 +22,19 @@ jobs:
           - "30.2"
           - "31.1"
 
+    env:
+      ELISP_CI_ELPAISH: "true"
+
     steps:
       - uses: actions/checkout@v5
 
       - name: Lint Source Code
         uses: tychoish/elisp-ci/lint@main
+        with:
+          elpaish: true
 
       - name: Run Tests
         uses: tychoish/elisp-ci@main
         with:
+          elpaish: true
           dependencies: "projectile gen annotated-completing-read cmdr"
