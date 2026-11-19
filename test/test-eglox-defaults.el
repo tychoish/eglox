@@ -120,5 +120,10 @@
     (should-not eglox-test-hook-a)
     (should-not eglox-test-hook-b)))
 
+(ert-deftest eglox-default-settings-include-inferior-lisp-program ()
+  "Confirm `eglox-settings' configures `inferior-lisp-program'."
+  (should (equal (cdr (assq 'inferior-lisp-program eglox-settings))
+                 "sbcl")))
+
 (provide 'test-eglox-defaults)
 ;;; test-eglox-defaults.el ends here

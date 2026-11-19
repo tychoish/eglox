@@ -986,7 +986,8 @@ Only called when `eglot' is loaded and `eglox-global-mode' is enabled."
             (js-indent-level . 2)
             (web-mode-enable-auto-pairing . t)
             (web-mode-enable-auto-expanding . t)
-            (web-mode-enable-css-colorization . t)))
+            (web-mode-enable-css-colorization . t)
+            (inferior-lisp-program . "sbcl")))
   "Alist of `(SYMBOL . VALUE)' settings managed by `eglox-global-mode'."
   :type '(alist :key-type symbol :value-type sexp)
   :group 'eglot)
