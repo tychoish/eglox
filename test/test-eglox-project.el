@@ -3,6 +3,7 @@
 (require 'ert)
 (require 'cl-lib)
 (require 'eglox-project)
+(defvar eglox-project-test-rollback)
 
 (ert-deftest eglox-project/cache-is-central-and-unique ()
   (let ((eglox-project-cache-directory (make-temp-file "eglox-cache-" t)))
@@ -75,6 +76,37 @@
             (eglox-project-mode -1)
             (should-not projectile-mode)
             (should (equal calls '(-1 1))))
+        (eglox-project-mode -1)))))
+
+(ert-deftest eglox-project/deferred-initialization-rolls-back-on-error ()
+  "A failed deferred start restores settings and permits a later retry."
+  (require 'projectile)
+  (let ((eglox-project-mode t)
+        (eglox-project--active t)
+        (eglox-project--initialized nil)
+        (eglox-project--initializing nil)
+        (eglox-project--owns-projectile nil)
+        (eglox-project--saved-settings nil)
+        (eglox-project-mode-hooks nil)
+        (eglox-project-settings '((eglox-project-test-rollback . changed)))
+        (eglox-project-test-rollback 'original)
+        (projectile-mode nil))
+    (cl-letf (((symbol-function 'projectile-mode)
+               (lambda (_arg) (error "startup failed"))))
+      (should-error (eglox-project--initialize))
+      (should-not eglox-project-mode)
+      (should-not eglox-project--active)
+      (should (eq eglox-project-test-rollback 'original))
+      (should-not (advice-member-p #'eglox-project--purge-dir-from-cache
+                                   'projectile-purge-dir-from-cache))
+      (should-not (memq #'eglox-project--after-load after-load-functions)))
+    (cl-letf (((symbol-function 'projectile-mode)
+               (lambda (arg) (setq projectile-mode (> arg 0)))))
+      (unwind-protect
+          (progn
+            (eglox-project-mode 1)
+            (should eglox-project--initialized)
+            (should projectile-mode))
         (eglox-project-mode -1)))))
 
 (ert-deftest eglox-project/cache-persists-without-touching-legacy-file ()

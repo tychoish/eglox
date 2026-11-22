@@ -12,7 +12,7 @@
 (require 'seq)
 (require 'subr-x)
 (require 'project)
-(require 'projectile)
+(autoload 'projectile-mode "projectile" nil t)
 
 (defgroup eglox-project nil "Project experience." :group 'tools)
 (defcustom eglox-project-cache-directory
@@ -37,6 +37,8 @@
 (defvar eglox-project--installed-hooks nil)
 (defvar eglox-project--owns-projectile nil)
 (defvar eglox-project--active nil)
+(defvar eglox-project--initialized nil)
+(defvar eglox-project--initializing nil)
 (defvar projectile-projects-cache)
 (defvar projectile-enable-caching)
 (defvar projectile-project-changed-functions)
@@ -46,6 +48,19 @@
 (declare-function projectile-project-root "projectile")
 (declare-function projectile-load-project-cache "projectile")
 (declare-function projectile-index-project-async "projectile")
+(declare-function projectile-current-project-files "projectile")
+(declare-function projectile-current-project-dirs "projectile")
+(declare-function projectile-completing-read "projectile")
+(declare-function projectile-session--sanitize-window-state "projectile")
+(declare-function projectile-session--recreate-buffer "projectile")
+(declare-function projectile-session--read "projectile")
+(declare-function projectile-project-name "projectile")
+(declare-function projectile-project-files "projectile")
+(declare-function projectile--message "projectile")
+(declare-function projectile--maybe-watch-project "projectile")
+(declare-function projectile--schedule-cache-flush "projectile")
+(declare-function projectile-persistent-cache-p "projectile")
+(declare-function projectile-file-cached-p "projectile")
 (declare-function gen-run-async "gen" (fn sequence &rest args))
 
 (defun eglox-project--cache-file (_original &optional root)
@@ -87,6 +102,7 @@
 ;;;###autoload
 (defun projectile-save-buffers-in-directory (dir)
   "Save all buffers visiting files within DIR using projectile."
+  (require 'projectile)
   (let ((default-directory (expand-file-name dir)))
     (projectile-save-project-buffers)))
 
@@ -94,6 +110,7 @@
 (defun projectile-save-project-buffers-picker ()
   "Interactively pick a project directory from open buffers and save its files."
   (interactive)
+  (require 'projectile)
   (require 'annotated-completing-read)
   (projectile-save-buffers-in-directory
    (annotated-completing-read
@@ -175,18 +192,21 @@ cancellation, pausing, and progress queries."
 (cl-defun projectile-enable-all-buffers (&key delay on-done (progress-interval 10))
   "Enable `projectile-mode' in all live buffers without blocking."
   (interactive)
+  (require 'projectile)
   (projectile--toggle-all-buffers 1 :delay delay :on-done on-done :progress-interval progress-interval))
 
 ;;;###autoload
 (cl-defun projectile-disable-all-buffers (&key delay on-done (progress-interval 10))
   "Disable `projectile-mode' in all live buffers without blocking."
   (interactive)
+  (require 'projectile)
   (projectile--toggle-all-buffers -1 :delay delay :on-done on-done :progress-interval progress-interval))
 
 ;;;###autoload
 (cl-defun projectile-load-project-buffers (&optional project &key delay on-done (progress-interval 5))
   "Visit the files of PROJECT (default: current root) without blocking."
   (interactive)
+  (require 'projectile)
   (let ((root (or project (projectile-project-root))))
     (unless root
       (user-error "Not in a project"))
@@ -208,6 +228,7 @@ cancellation, pausing, and progress queries."
 (cl-defun projectile-session-restore-async (&optional project &key delay on-done)
   "Restore PROJECT's (default: current) saved session buffers without blocking."
   (interactive)
+  (require 'projectile)
   (let* ((frame (selected-frame))
          (root (or project (projectile-project-root)))
          (data (and root (projectile-session--read root))))
@@ -280,7 +301,7 @@ the count of purged files, or nil if the purge could not be committed."
                         (funcall on-done purged-count))))))))))
 
 ;;;###autoload
-(cl-defun projectile-purge-dir-from-cache (dir &key delay on-done (chunk-size 1000) (progress-interval 1))
+(cl-defun eglox-project--purge-dir-from-cache (dir &key delay on-done (chunk-size 1000) (progress-interval 1))
   "Purge DIR from the current project's cache cooperatively.
 ON-DONE receives the purge count, or nil if the operation fails.
 Return a `gen-run-async' handle."
@@ -308,9 +329,12 @@ Return a `gen-run-async' handle."
 ON-DONE receives the purge count, or nil if the operation fails.
 Return a `gen-run-async' handle."
   (interactive
-   (list (completing-read-multiple
-          "Remove files from cache (comma-separated): "
-          (projectile-current-project-files))))
+   (progn
+     (require 'projectile)
+     (list (completing-read-multiple
+            "Remove files from cache (comma-separated): "
+            (projectile-current-project-files)))))
+  (require 'projectile)
   (let* ((root (or project (projectile-project-root)))
          (file-set (make-hash-table :test #'equal)))
     (seq-do (lambda (file) (setf (map-elt file-set file) t)) files)
@@ -374,6 +398,7 @@ Cancels `eglox-projectile-warm-cache-idle-timer' when the queue is empty."
 
 (defun eglox-projectile-warm-cache-for-buffer ()
   "Queue background Projectile indexing for the current buffer's project root."
+  (eglox-project--initialize)
   (when-let* ((root (and (bound-and-true-p projectile-mode)
                          (projectile-project-root))))
     (eglox-projectile-warm-cache-enqueue root)))
@@ -382,28 +407,54 @@ Cancels `eglox-projectile-warm-cache-idle-timer' when the queue is empty."
   "Warm Projectile cache when switching projects."
   (eglox-projectile-warm-cache-for-buffer))
 
+(defun eglox-project--initialize (&rest _)
+  "Initialize Projectile integration when first needed."
+  (when (and eglox-project--active (not eglox-project--initialized)
+             (not eglox-project--initializing))
+    (let ((eglox-project--initializing t))
+      (condition-case err
+          (progn
+            (require 'projectile)
+            (eglox-project--apply-settings)
+            (advice-add 'projectile-project-cache-file :around #'eglox-project--cache-file)
+            (advice-add 'projectile-purge-file-from-cache :around #'projectile-purge-file-from-cache-debounced)
+            (advice-add 'projectile-purge-dir-from-cache :override #'eglox-project--purge-dir-from-cache)
+            (add-hook 'projectile-project-changed-functions #'eglox-projectile-warm-cache-on-project-change)
+            (unless (bound-and-true-p projectile-mode)
+              (setq eglox-project--owns-projectile t)
+              (projectile-mode 1))
+            (setq eglox-project--initialized t)
+            (remove-hook 'after-load-functions #'eglox-project--after-load))
+        (error
+         (eglox-project-mode -1)
+         (signal (car err) (cdr err)))))))
+
+(defun eglox-project--after-load (&rest _)
+  "Initialize the integration once Projectile has loaded."
+  (when (featurep 'projectile)
+    (eglox-project--initialize)))
+
 ;;;###autoload
 (define-minor-mode eglox-project-mode
-  "Enable configurable project defaults, cache policy, and mode hooks."
+  "Enable project defaults and initialize Projectile on first use."
   :global t :group 'eglox-project
   (if eglox-project-mode
       (unless eglox-project--active
         (setq eglox-project--active t)
         (condition-case err
             (progn
-              (eglox-project--apply-settings)
-              (advice-add 'projectile-project-cache-file :around #'eglox-project--cache-file)
-              (advice-add 'projectile-purge-file-from-cache :around #'projectile-purge-file-from-cache-debounced)
-              (add-hook 'projectile-project-changed-functions #'eglox-projectile-warm-cache-on-project-change)
               (setq eglox-project--installed-hooks (copy-sequence eglox-project-mode-hooks))
               (seq-do (lambda (hook) (add-hook hook #'eglox-projectile-warm-cache-for-buffer))
                       eglox-project--installed-hooks)
-              (unless (bound-and-true-p projectile-mode)
-                (setq eglox-project--owns-projectile t)
-                (projectile-mode 1)))
+              (add-hook 'cmdr-spec-projectile-activate-hook #'eglox-project--initialize)
+              (add-hook 'after-load-functions #'eglox-project--after-load)
+              (when (featurep 'projectile)
+                (eglox-project--initialize)))
           (error
            (eglox-project-mode -1)
            (signal (car err) (cdr err)))))
+    (remove-hook 'cmdr-spec-projectile-activate-hook #'eglox-project--initialize)
+    (remove-hook 'after-load-functions #'eglox-project--after-load)
     (remove-hook 'projectile-project-changed-functions #'eglox-projectile-warm-cache-on-project-change)
     (when (timerp eglox-projectile-warm-cache-idle-timer)
       (cancel-timer eglox-projectile-warm-cache-idle-timer)
@@ -411,6 +462,7 @@ Cancels `eglox-projectile-warm-cache-idle-timer' when the queue is empty."
     (setq eglox-projectile-warm-cache-queue nil)
     (advice-remove 'projectile-project-cache-file #'eglox-project--cache-file)
     (advice-remove 'projectile-purge-file-from-cache #'projectile-purge-file-from-cache-debounced)
+    (advice-remove 'projectile-purge-dir-from-cache #'eglox-project--purge-dir-from-cache)
     (seq-do (lambda (hook) (remove-hook hook #'eglox-projectile-warm-cache-for-buffer)) eglox-project--installed-hooks)
     (setq eglox-project--installed-hooks nil)
     (when eglox-project--owns-projectile
@@ -418,7 +470,8 @@ Cancels `eglox-projectile-warm-cache-idle-timer' when the queue is empty."
         (projectile-mode -1))
       (setq eglox-project--owns-projectile nil))
     (eglox-project--restore-settings)
-    (setq eglox-project--active nil)))
+    (setq eglox-project--initialized nil
+          eglox-project--active nil)))
 
 (provide 'eglox-project)
 ;;; eglox-project.el ends here

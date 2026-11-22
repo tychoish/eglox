@@ -1113,6 +1113,12 @@ Only called when `eglot' is loaded and `eglox-global-mode' is enabled."
       (when (derived-mode-p 'prog-mode)
         (eglox-projectile-warm-cache-for-buffer)))))
 
+(defun eglox--project-after-load (&rest _)
+  "Start project integration after Projectile is loaded."
+  (when (featurep 'projectile)
+    (eglox--start-project-mode)
+    (remove-hook 'after-load-functions #'eglox--project-after-load)))
+
 (defun eglox--enable-global ()
   "Enable global Eglot extensions, mode hooks, and projectile integration."
   (require 'elec-pair)
@@ -1121,6 +1127,7 @@ Only called when `eglot' is loaded and `eglox-global-mode' is enabled."
     (setq eglox--owns-electric-pair-mode t))
   (when eglox-enable-project-mode
     (add-hook 'prog-mode-hook #'eglox--start-project-mode)
+    (add-hook 'after-load-functions #'eglox--project-after-load)
     (add-hook 'cmdr-spec-projectile-activate-hook #'eglox--start-project-mode)
     (when (featurep 'projectile)
       (eglox--start-project-mode)))
@@ -1135,6 +1142,7 @@ Only called when `eglot' is loaded and `eglox-global-mode' is enabled."
 (defun eglox--disable-global ()
   "Disable global Eglot extensions, mode hooks, timers, and advices."
   (remove-hook 'prog-mode-hook #'eglox--start-project-mode)
+  (remove-hook 'after-load-functions #'eglox--project-after-load)
   (remove-hook 'cmdr-spec-projectile-activate-hook #'eglox--start-project-mode)
   (when eglox--owns-electric-pair-mode
     (electric-pair-mode -1)

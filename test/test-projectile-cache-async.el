@@ -123,7 +123,7 @@
               ((symbol-function 'projectile--schedule-cache-flush)
                (lambda (p) (setq flush-scheduled p)))
               ((symbol-function 'message) #'ignore))
-      (projectile-purge-dir-from-cache "target/"
+      (eglox-project--purge-dir-from-cache "target/"
                                        :on-done (lambda (count) (setq done-count count)))
       (projectile-test--wait-async (lambda () done-count))
       (should (equal done-count 2))
@@ -165,7 +165,7 @@
                (lambda (_root new-files) (setq watched-files new-files))))
       (let ((projectile-auto-update-cache-with-watches t)
             (projectile-enable-caching t))
-        (projectile-purge-dir-from-cache "docs/" :on-done (lambda (_) (setq done t)))
+        (eglox-project--purge-dir-from-cache "docs/" :on-done (lambda (_) (setq done t)))
         (projectile-test--wait-async (lambda () done))
         (should done)
         (should (equal watched-files '("src/a.el" "src/b.el")))))))
@@ -188,7 +188,7 @@
                   ((symbol-function 'projectile-persistent-cache-p) (lambda () t))
                   ((symbol-function 'projectile--schedule-cache-flush) #'ignore)
                   ((symbol-function 'message) #'ignore))
-          (projectile-purge-dir-from-cache "build/"
+          (eglox-project--purge-dir-from-cache "build/"
                                            :delay 0.005
                                            :on-done (lambda (_) (setq done t)))
           (projectile-test--wait-async (lambda () done) 5.0)
