@@ -1098,8 +1098,20 @@ Only called when `eglot' is loaded and `eglox-global-mode' is enabled."
   "When non-nil, enable the independent project experience with Eglox."
   :type 'boolean :group 'eglot)
 (defvar eglox--owns-project-mode nil)
+(defvar eglox--starting-project-mode nil)
 (defvar eglox--owns-electric-pair-mode nil)
 (defvar eglox--global-active nil)
+
+(defun eglox--start-project-mode ()
+  "Start the project integration when programming or Projectile is used."
+  (when (and eglox--global-active eglox-enable-project-mode
+             (not (bound-and-true-p eglox-project-mode))
+             (not eglox--starting-project-mode))
+    (let ((eglox--starting-project-mode t))
+      (eglox-project-mode 1)
+      (setq eglox--owns-project-mode t)
+      (when (derived-mode-p 'prog-mode)
+        (eglox-projectile-warm-cache-for-buffer)))))
 
 (defun eglox--enable-global ()
   "Enable global Eglot extensions, mode hooks, and projectile integration."
@@ -1107,9 +1119,11 @@ Only called when `eglot' is loaded and `eglox-global-mode' is enabled."
   (when (not electric-pair-mode)
     (electric-pair-mode 1)
     (setq eglox--owns-electric-pair-mode t))
-  (when (and eglox-enable-project-mode (not eglox-project-mode))
-    (eglox-project-mode 1)
-    (setq eglox--owns-project-mode t))
+  (when eglox-enable-project-mode
+    (add-hook 'prog-mode-hook #'eglox--start-project-mode)
+    (add-hook 'cmdr-spec-projectile-activate-hook #'eglox--start-project-mode)
+    (when (featurep 'projectile)
+      (eglox--start-project-mode)))
   (eglox--apply-settings)
   (eglox-modes-initialize)
   (eglox--configure-python)
@@ -1120,6 +1134,8 @@ Only called when `eglot' is loaded and `eglox-global-mode' is enabled."
 
 (defun eglox--disable-global ()
   "Disable global Eglot extensions, mode hooks, timers, and advices."
+  (remove-hook 'prog-mode-hook #'eglox--start-project-mode)
+  (remove-hook 'cmdr-spec-projectile-activate-hook #'eglox--start-project-mode)
   (when eglox--owns-electric-pair-mode
     (electric-pair-mode -1)
     (setq eglox--owns-electric-pair-mode nil))
