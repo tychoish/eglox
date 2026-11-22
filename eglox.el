@@ -341,7 +341,7 @@ or `describe-symbol' as fallback."
     (c++-ts-mode-hook . eglox-ensure)
     (c-ts-mode-hook . eglox-ensure)
     (c-or-c++-mode-hook . eglox-ensure)
-    (python-mode-hook . eglox-ensure)
+    (python-mode-hook . (eglox--python-setup eglox-ensure))
     (python-ts-mode-hook . (eglox--python-setup eglox-ensure))
     (go-mode-hook . eglox-ensure)
     (go-mod-mode-hook . eglox-ensure)
@@ -1066,7 +1066,6 @@ Only called when `eglot' is loaded and `eglox-global-mode' is enabled."
     (keymap-set python-base-mode-map "M-<right>" #'python-indent-shift-right)
     (font-lock-add-keywords 'python-ts-mode '(("\t" 0 'trailing-whitespace prepend)))))
 
-(with-eval-after-load 'python (eglox--configure-python))
 
 (defun eglox--go-setup ()
   "Set defaults for Go buffers."
@@ -1075,6 +1074,7 @@ Only called when `eglot' is loaded and `eglox-global-mode' is enabled."
 
 (defun eglox--python-setup ()
   "Set defaults for Python buffers."
+  (eglox--configure-python)
   (setq-local fill-column eglox-python-fill-column)
   (setq-local tab-width eglox-python-tab-width))
 

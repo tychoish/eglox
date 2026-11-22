@@ -4,6 +4,8 @@
 (require 'cl-lib)
 (require 'eglox)
 (defvar python-base-mode-map)
+(defvar python-mode-hook)
+(defvar python-ts-mode-hook)
 
 (ert-deftest eglox-language/python-bindings-before-and-after-load ()
   "Python bindings apply whether its map exists before or after activation."
@@ -17,14 +19,37 @@
         (when map-available (eglox--configure-python))
         (unless map-available
           (setq python-base-mode-map (make-sparse-keymap))
-          ;; Simulate the callback registered with `with-eval-after-load'.
-          (eglox--configure-python))
+          ;; Simulate entering a Python buffer after the map becomes available.
+          (with-temp-buffer (eglox--python-setup)))
         (eglox--configure-python)
         (should (= installed 1))
         (should (eq (lookup-key python-base-mode-map (kbd "M-<left>"))
                     #'python-indent-shift-left))
         (should (eq (lookup-key python-base-mode-map (kbd "M-<right>"))
                     #'python-indent-shift-right))))))
+
+(ert-deftest eglox-language/python-hooks-install-and-remove-bindings ()
+  "Python hooks configure bindings and are removed with global hooks."
+  (let ((eglox-global-mode t)
+        (eglox--python-keys nil)
+        (eglox-mode-hooks '((python-mode-hook . (eglox--python-setup eglox-ensure))
+                            (python-ts-mode-hook . (eglox--python-setup eglox-ensure))))
+        (python-mode-hook nil)
+        (python-ts-mode-hook nil)
+        (python-base-mode-map (make-sparse-keymap)))
+    (cl-letf (((symbol-function 'font-lock-add-keywords) #'ignore)
+              ((symbol-function 'eglox-ensure) #'ignore))
+      (unwind-protect
+          (progn
+            (eglox--add-hooks)
+            (should (memq #'eglox--python-setup python-mode-hook))
+            (should (memq #'eglox--python-setup python-ts-mode-hook))
+            (with-temp-buffer (run-hooks 'python-mode-hook))
+            (should (eq (lookup-key python-base-mode-map (kbd "M-<left>"))
+                        #'python-indent-shift-left)))
+        (eglox--remove-hooks))
+      (should-not (memq #'eglox--python-setup python-mode-hook))
+      (should-not (memq #'eglox--python-setup python-ts-mode-hook)))))
 
 (ert-deftest eglox-language/buffer-setup-and-opt-outs ()
   (let ((eglox-go-fill-column 88)
