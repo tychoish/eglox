@@ -578,8 +578,11 @@ When the buffer's server has died, reconnect orphaned buffers instead."
   (interactive)
   (when (eglot-managed-p)
     (if (eglox-server-live-p)
-        (with-demoted-errors "WARN (`eglox-organize-imports-for-hook'): %S"
-          (eglot-code-action-organize-imports (point-min) (point-max)))
+        (condition-case err
+            (eglot-code-action-organize-imports (point-min) (point-max))
+          (error
+           (unless (string-match-p "code actions here" (error-message-string err))
+             (message "WARN (`eglox-organize-imports-for-hook'): %S" err))))
       (eglox-cleanup-stale-connections))))
 
 ;;;###autoload
